@@ -88,7 +88,7 @@ char** str_split(char* a_str, char a_delim)
     return result;
 }
 
-iridium_status_t iridium_satcom_process_result(iridium_settings_t *satcom, char *command, char *data) {
+iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command, char *data) {
     if (strcmp ("AT", command) == 0) { return SAT_OK; }
     if (strcmp ("AT&K0", command) == 0) { return SAT_OK; }
     if (strcmp ("AT&w0", command) == 0) { return SAT_OK; }
@@ -176,21 +176,21 @@ iridium_status_t iridium_satcom_process_result(iridium_settings_t *satcom, char 
 }
 
 
-iridium_status_t iridium_update_iqs(iridium_settings_t* satcom, iridium_queue_status_t status) {
+iridium_status_t iridium_update_iqs(iridium_t* satcom, iridium_queue_status_t status) {
     pthread_mutex_lock(&satcom->p_status_mutex);
     satcom->status = status;
     pthread_mutex_unlock(&satcom->p_status_mutex);
     return SAT_OK;
 }
 
-iridium_status_t iridium_update_p_nonce(iridium_settings_t* satcom, int nonce) {
+iridium_status_t iridium_update_p_nonce(iridium_t* satcom, int nonce) {
     pthread_mutex_lock(&satcom->p_nonce_mutex);
     satcom->p_nonce = nonce;
     pthread_mutex_unlock(&satcom->p_nonce_mutex);
     return SAT_OK;
 }
 
-iridium_queue_status_t iridium_get_iqs(iridium_settings_t* satcom) {
+iridium_queue_status_t iridium_get_iqs(iridium_t* satcom) {
     iridium_queue_status_t t_status = IQS_NONE;
     pthread_mutex_lock(&satcom->p_status_mutex);
     t_status = satcom->status;
@@ -198,7 +198,7 @@ iridium_queue_status_t iridium_get_iqs(iridium_settings_t* satcom) {
     return t_status;
 }
 
-iridium_status_t iridium_send_raw(iridium_settings_t* satcom, char *data, int nonce) {
+iridium_status_t iridium_send_raw(iridium_t* satcom, char *data, int nonce) {
     if (satcom->status == IQS_WAITING) {
         // send iridium_message_t to buffer queue
         ESP_LOGI(TAG_IRIDIUM, "IN_BUFFER_QUEUE[%d]", nonce);
@@ -217,7 +217,7 @@ iridium_status_t iridium_send_raw(iridium_settings_t* satcom, char *data, int no
     return SAT_OK;
 }
 
-iridium_result_t iridium_config_ring(iridium_settings_t *satcom, bool enabled) {
+iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled) {
     iridium_result_t result;
 
     /* enable/disable satcom ring */
@@ -253,7 +253,7 @@ iridium_result_t iridium_config_ring(iridium_settings_t *satcom, bool enabled) {
     return result;
 }
 
-iridium_result_t iridium_tx_message(iridium_settings_t *satcom, char *message) {
+iridium_result_t iridium_tx_message(iridium_t *satcom, char *message) {
     iridium_result_t result;
     iridium_result_t r1 = iridium_send(satcom, AT_SBDWT, message, true, 500);
 
@@ -292,7 +292,7 @@ iridium_result_t iridium_tx_message(iridium_settings_t *satcom, char *message) {
 AT+SBDIX = +SBDIX:<MO status>,<MOMSN>,<MT status>,<MTMSN>,<MT length>,<MT queued>
 */
 
-iridium_result_t iridium_send(iridium_settings_t* satcom, iridium_command_t command, char *rdata, bool wait_response, int wait_interval) {
+iridium_result_t iridium_send(iridium_t* satcom, iridium_command_t command, char *rdata, bool wait_response, int wait_interval) {
     iridium_result_t result;
 
     /* increment c_nonce */
@@ -412,7 +412,7 @@ iridium_result_t iridium_send(iridium_settings_t* satcom, iridium_command_t comm
 }
 
 void ring_satcom_task(void *pvParameters) { 
-    iridium_settings_t* satcom = (iridium_settings_t *)pvParameters;
+    iridium_t* satcom = (iridium_t *)pvParameters;
     vTaskDelay(pdMS_TO_TICKS(1000));
 
     iridium_result_t rcris = iridium_send(satcom, AT_CRIS, NULL, true, 500);
@@ -448,7 +448,7 @@ void ring_satcom_task(void *pvParameters) {
 }
 
 void uart_satcom_task(void *pvParameters) { 
-    iridium_settings_t* satcom = (iridium_settings_t *)pvParameters;
+    iridium_t* satcom = (iridium_t *)pvParameters;
     uint8_t* dtmp = (uint8_t*) malloc(IRI_RD_BUF_SIZE);
     uart_event_t event;
 
@@ -460,7 +460,7 @@ void uart_satcom_task(void *pvParameters) {
                 case UART_DATA:
                     uart_read_bytes(satcom->uart_number, dtmp, event.size, portMAX_DELAY);
 
-                    ESP_LOGD(TAG_IRIDIUM, "R:%s-", dtmp);
+                    ESP_LOGI(TAG_IRIDIUM, "R:%s-", dtmp);
 
                     char* pch = NULL;
                     pch = strtok((char*)dtmp, "\r\n");
@@ -551,7 +551,7 @@ void uart_satcom_task(void *pvParameters) {
 }
 
 void buffer_satcom_task(void *pvParameters) { 
-    iridium_settings_t* satcom = (iridium_settings_t *)pvParameters;
+    iridium_t* satcom = (iridium_t *)pvParameters;
     iridium_queue_status_t t_status = IQS_NONE;
 
     int delay_ms = satcom->buffer_delay_ms;
@@ -570,7 +570,7 @@ void buffer_satcom_task(void *pvParameters) {
 } 
 
 void message_satcom_task(void *pvParameters) { 
-    iridium_settings_t* satcom = (iridium_settings_t *)pvParameters;
+    iridium_t* satcom = (iridium_t *)pvParameters;
     int delay_ms = satcom->buffer_delay_ms;
 
     for(;;) {
@@ -583,7 +583,18 @@ void message_satcom_task(void *pvParameters) {
     vTaskDelete(NULL);
 }  
 
-iridium_status_t iridium_config(iridium_settings_t *satcom) {
+iridium_t* iridium_default_configuration() {
+    iridium_t *satcom = malloc(sizeof(iridium_t));
+    satcom->buffer_size = 10; // item size
+    satcom->buffer_delay_ms = 1000; // ms
+    satcom->task_message_stack_depth = 4096;
+    satcom->task_buffer_stack_depth = 2024;
+    satcom->task_uart_stack_depth = 4096;
+    return satcom;
+}
+
+
+iridium_status_t iridium_config(iridium_t *satcom) {
     /*
         Baud Rate = 19200 Data Bits = 8 Parity = N Stop Bits = 1
     */
@@ -637,21 +648,21 @@ iridium_status_t iridium_config(iridium_settings_t *satcom) {
     /* start message processing tasks */
     xTaskCreate(&message_satcom_task, 
                 "message_satcom_task", 
-                4096, 
+                satcom->task_message_stack_depth, 
                 satcom, 
                 12, NULL);
 
     /* start uart processing tasks */
     xTaskCreate(&uart_satcom_task, 
                 "uart_satcom_task", 
-                4096,
+                satcom->task_uart_stack_depth,
                 satcom, 
                 12, NULL);
 
     /* start buffer processing tasks */
     xTaskCreate(&buffer_satcom_task, 
                 "buffer_satcom_task", 
-                2048, 
+                satcom->task_buffer_stack_depth, 
                 satcom, 
                 12, NULL);
 

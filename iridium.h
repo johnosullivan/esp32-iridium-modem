@@ -1,10 +1,10 @@
 #ifndef IRIDIUM_H_INCLUDED
 #define IRIDIUM_H_INCLUDED
 
-/*
- * Author: John O'Sullivan
- * Purpose: ESP32 Satcom Library (Iridium Network)
- * Language:  C
+/**
+ * @author John O'Sullivan
+ * @paragraph ESP32 Satcom Library (Iridium Network)
+ * Language:  C/C++
  */
 
 #ifdef __cplusplus
@@ -26,23 +26,19 @@ extern "C" {
 #include "nvs_flash.h"
 #include "esp_system.h"
 #include "esp_spi_flash.h"
-
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "freertos/queue.h"
 
 #include "stack.h"
 
-/*
-    define buffer values
-*/
 #define IRI_BUF_SIZE    (4096)
 #define IRI_RD_BUF_SIZE (IRI_BUF_SIZE)
 #define IRI_BUFF_DELAY  (100)
 
-/* 
-    iridium command enum for AT commands
-*/
+/**
+ * @brief the enum to represent the AT commands. 
+ */
 typedef enum iridium_command {
     SBDRING         = -1,
     AT              = 0,
@@ -63,11 +59,17 @@ typedef enum iridium_command {
 
 } iridium_command_t;
 
+/**
+ * @brief the iridium command status.
+ */
 typedef enum iridium_status {
     SAT_ERROR       = -1,
     SAT_OK          = 1 
 } iridium_status_t;
 
+/**
+ * @brief the iridium UART queue status.
+ */
 typedef enum iridium_queue_status {
     IQS_NONE        = -1,
     IQS_OPEN        = 0,
@@ -107,13 +109,17 @@ typedef enum iridium_mo_status {
     MO_PLL_LOCK_FAILURE                             = 65  // PLL lock failure; hardware error during attempted transmit.
 } iridium_mo_status_t;
 
-/*
-    0 - 4 = Transmit successful
-    32    = No network service
-    MO    = Mobile Originated 
-    MT    = Mobile Terminated
-*/
-typedef struct iridium_settings {
+/**
+ * @brief the core iridum struct with all configuration / status values.
+ * 
+ * @paragraph 
+ * 
+ * 0 - 4 = Transmit successful
+ * 32    = No network service
+ * MO    = Mobile Originated 
+ * MT    = Mobile Terminated
+ */
+typedef struct iridium {
     QueueHandle_t uart_queue;
     QueueHandle_t buffer_queue;
     QueueHandle_t message_queue;
@@ -144,11 +150,18 @@ typedef struct iridium_settings {
     iridium_queue_status_t status;
     pthread_mutex_t p_status_mutex;
     pthread_mutex_t p_nonce_mutex;
+    /* stack sizes */
+    int task_message_stack_depth;
+    int task_buffer_stack_depth;
+    int task_uart_stack_depth;
     /* callbacks */ 
-    void (*callback) (struct iridium_settings* satcom, iridium_command_t command, iridium_status_t status);
-    void (*message_callback) (struct iridium_settings* satcom, char* data);
-} iridium_settings_t;
+    void (*callback) (struct iridium* satcom, iridium_command_t command, iridium_status_t status);
+    void (*message_callback) (struct iridium* satcom, char* data);
+} iridium_t;
 
+/**
+ * @brief the iridium message for the modem.
+ */
 typedef struct iridium_message {
   char data[50];
   int size;
@@ -156,34 +169,100 @@ typedef struct iridium_message {
   int command;
 } iridium_message_t;
 
+/**
+ * @brief the iridium result from the modem.
+ */
 typedef struct iridium_result {
     char result[50];
     iridium_status_t status;
 } iridium_result_t;
 
-/* 
-    iridum system callbacks
-*/
-typedef void (*callback_t) (iridium_settings_t* satcom, iridium_command_t command, iridium_status_t status);
-typedef void (*message_callback_t) (iridium_settings_t* satcom, char* data);
+/**
+ * @brief callbacks required for message/event data.
+ */
+typedef void (*callback_t) (iridium_t* satcom, iridium_command_t command, iridium_status_t status);
+typedef void (*message_callback_t) (iridium_t* satcom, char* data);
 
-iridium_status_t iridium_satcom_process_result(iridium_settings_t *satcom, char *command, char *data);
+/**
+ * @brief Process data returned to device from UART bus.
+ * @param satcom the iridium_t struct pointer.
+ * @param command the AT command being processed.
+ * @param data the data returned to be parsed into iridium_t struct.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ */
+iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command, char *data);
 
-iridium_status_t iridium_update_iqs(iridium_settings_t* satcom, iridium_queue_status_t status);
+/**
+ * @brief Update the iridium queue status. 
+ * @param satcom the iridium_t struct pointer.
+ * @param status the current IQS status.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ */
+iridium_status_t iridium_update_iqs(iridium_t* satcom, iridium_queue_status_t status);
 
-iridium_status_t iridium_update_p_nonce(iridium_settings_t* satcom, int nonce);
+/**
+ * @brief Update the processing message nonce. 
+ * @param satcom the iridium_t struct pointer.
+ * @param nonce the message nonce int.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ */
+iridium_status_t iridium_update_p_nonce(iridium_t* satcom, int nonce);
 
-iridium_queue_status_t iridium_get_iqs(iridium_settings_t* satcom); 
+/**
+ * @brief Retrieves the current queue status while processing a message nonce. 
+ * @param satcom the iridium_t struct pointer.
+ * @return a iridium_queue_status_t with IQS_NONE, IQS_OPEN or IQS_WAITING.
+ */
+iridium_queue_status_t iridium_get_iqs(iridium_t* satcom); 
 
-iridium_status_t iridium_send_raw(iridium_settings_t* satcom, char *data, int nonce);
+/**
+ * @brief Send data payload across the UART bus.
+ * @param satcom the iridium_t struct pointer.
+ * @param data the data to be sent. 
+ * @param nonce the nonce used to track responses. 
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ */
+iridium_status_t iridium_send_raw(iridium_t* satcom, char *data, int nonce);
 
-iridium_result_t iridium_send(iridium_settings_t* satcom, iridium_command_t command, char *rdata, bool wait_response, int wait_interval);
+/**
+ * @brief Send AT command with data.  
+ * @param satcom the iridium_t struct pointer.
+ * @param command the iridium modem AT command.
+ * @param rdata the raw data. 
+ * @param wait_response wait for a responce from the modem.
+ * @param wait_interval the amount of time in ms for wait interval check.
+ * @return a iridium_result_t with SAT_OK or SAT_ERROR with metadata.
+ */
+iridium_result_t iridium_send(iridium_t* satcom, iridium_command_t command, char *rdata, bool wait_response, int wait_interval);
 
-iridium_status_t iridium_config(iridium_settings_t *satcom);
+/**
+ * @brief Configure iridium modem via UART connection. 
+ * @param satcom the iridium_t struct pointer.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ */
+iridium_status_t iridium_config(iridium_t *satcom);
 
-iridium_result_t iridium_config_ring(iridium_settings_t *satcom, bool enabled);
+/**
+ * @brief Enabled or disable the ring notification on the modem.  
+ * @param satcom the iridium_t struct pointer.
+ * @param enabled the ring notification.
+ * @return a iridium_result_t with SAT_OK or SAT_ERROR with metadata.
+ */
+iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled);
 
-iridium_result_t iridium_tx_message(iridium_settings_t *satcom, char *message);
+/**
+ * @brief Transmit a message to the iridium network.
+ * @param satcom the iridium_t struct pointer.
+ * @param message to be sent.
+ * @return a iridium_result_t with SAT_OK or SAT_ERROR with metadata.
+ */
+iridium_result_t iridium_tx_message(iridium_t *satcom, char *message);
+
+/**
+ * @brief Create a default iridium configuration.
+ * @return a valid iridium_t struct configuration.
+ */
+iridium_t* iridium_default_configuration();
 
 #ifdef __cplusplus
 }
