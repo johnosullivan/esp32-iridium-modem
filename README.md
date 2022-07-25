@@ -2,6 +2,8 @@
 
 ## Overview
 
+The purpose of this library is to provide a drop-in solution for interactions on the Iridium Satellite network using AT commands. The library uses the ESP32 UART bus with different queues/pthread to mange messages in an asynchronous or synchronous way.
+
 ## Dependencies 
 
 - ESP IDF.PY
@@ -9,11 +11,77 @@
 
 ## Documentation
 
+Construct an iridium satellite communication struct with callbacks.
 
+```c
+iridium_t *satcom = iridium_default_configuration();
+satcom->callback = &cb_satcom;
+satcom->message_callback = &cb_message;
+```
+
+Configure UART bus ports.
+
+```c
+/* UART Port Configuration */
+satcom->uart_number = UART_NUM_1;
+satcom->uart_txn_number = GPIO_NUM_17;
+satcom->uart_rxd_number = GPIO_NUM_18;
+satcom->uart_rts_number = UART_PIN_NO_CHANGE;
+satcom->uart_cts_number = UART_PIN_NO_CHANGE;
+```
+
+Setup satellite modem.
+
+```c
+iridium_config(satcom) // return SAT_OK or SAT_ERROR
+```
+
+Once a `SAT_OK` status is received from the satellite configuration, the following methods are available.
+
+---
+
+Enabled or disable the ring notification on the modem.
+```c
+/**
+ * @param satcom the iridium_t struct pointer.
+ * @param enabled the ring notification.
+ * @return a iridium_result_t with metadata.
+ */
+iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled);
+```
+
+---
+Transmit a message to the iridium network.
+```c
+/**
+ * @param satcom the iridium_t struct pointer.
+ * @param message to be sent.
+ * @return a iridium_result_t with metadata.
+ */
+iridium_result_t iridium_tx_message(iridium_t *satcom, char *message);
+```
+
+---
+Send AT command with data.
+```c
+/**
+ * @param satcom the iridium_t struct pointer.
+ * @param command the iridium modem AT command.
+ * @param rdata the raw data. 
+ * @param wait_response wait for a responce from the modem.
+ * @param wait_interval the amount of time in ms for wait interval check.
+ * @return a iridium_result_t with metadata.
+ */
+iridium_result_t iridium_send(iridium_t* satcom, iridium_command_t command, char *rdata, bool wait_response, int wait_interval);
+```
 
 ## Example
 
 ```c
+#include "iridium.h"
+
+static const char *TAG_CORE = "iridium_example";
+
 /* Callbacks */
 void cb_satcom(iridium_t* satcom, iridium_command_t command, iridium_status_t status) { 
     if (status == SAT_OK) {
