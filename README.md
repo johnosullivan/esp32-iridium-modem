@@ -6,8 +6,8 @@ The purpose of this library is to provide a drop-in solution for interactions on
 
 ## Dependencies 
 
-- ESP IDF.PY
-- FreeRTOS
+- <a href="https://github.com/espressif/esp-idf/blob/master/tools/idf.py">ESP IDF</a>
+- <a href="https://www.freertos.org">FreeRTOS</a>
 
 ## Documentation
 
