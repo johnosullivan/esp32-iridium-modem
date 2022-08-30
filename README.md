@@ -2,7 +2,7 @@
 
 ## Overview
 
-The purpose of this library is to provide a drop-in solution for interactions on the Iridium Satellite network using AT commands. The library uses the ESP32 UART bus with different queues/pthread to mange messages in an asynchronous or synchronous way.
+The purpose of this library is to provide a drop-in solution for interactions on the Iridium Satellite network using AT commands. The library uses the ESP32 UART bus with different queues/pthread to manage messages in an asynchronous or synchronous way.
 
 ## Dependencies 
 
