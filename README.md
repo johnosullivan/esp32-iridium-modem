@@ -9,7 +9,28 @@ The purpose of this library is to provide a drop-in solution for interactions on
 - <a href="https://github.com/espressif/esp-idf/blob/master/tools/idf.py">ESP IDF</a>
 - <a href="https://www.freertos.org">FreeRTOS</a>
 
+--- 
+
+## Hardware
+
 ![Pinout](img/pinout.png)
+
+**NOTE**: The default serial baud rate is 19200 with most of the RockBlock pinouts operating on 3.3v logic. 
+
+1) RXD -> Serial output from device
+2) CTS -> Clear to Send
+3) RTS -> Ready To Send
+4) NET -> Network Available
+5) RI -> Ring Indicator
+6) TXD -> Serial input to device
+7) SLP ->  Sleep control
+8) 5V -> 5V in power supply
+9) BAT -> 3.7V power supply
+10) GND -> Ground 
+
+
+    
+---
 
 ## Documentation
 
