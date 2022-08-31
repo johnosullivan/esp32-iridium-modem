@@ -9,6 +9,8 @@ The purpose of this library is to provide a drop-in solution for interactions on
 - <a href="https://github.com/espressif/esp-idf/blob/master/tools/idf.py">ESP IDF</a>
 - <a href="https://www.freertos.org">FreeRTOS</a>
 
+![Pinout](img/pinout.png)
+
 ## Documentation
 
 Construct an iridium satellite communication struct with callbacks.
