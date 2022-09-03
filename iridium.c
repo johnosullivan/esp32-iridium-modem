@@ -590,11 +590,60 @@ iridium_t* iridium_default_configuration() {
     satcom->task_message_stack_depth = 4096;
     satcom->task_buffer_stack_depth = 2024;
     satcom->task_uart_stack_depth = 4096;
+    satcom->gpio_sleep_pin_number = -1;
     return satcom;
 }
 
+iridium_status_t iridium_system_spec(iridium_t *satcom) {
+    /* AT system details */
+    iridium_result_t r;
+
+    r = iridium_send(satcom, AT_CGMI, NULL, true, 500);
+    if (r.status != SAT_OK) {
+        return r.status;
+    }
+
+    r = iridium_send(satcom, AT_CGMM, NULL, true, 500);
+    if (r.status != SAT_OK) {
+        return r.status;
+    }
+
+    return r.status;
+}
+
+iridium_status_t iridium_modem_sleep(iridium_t *satcom) {
+    /* turn off modem */
+    esp_err_t err = gpio_set_level(satcom->gpio_sleep_pin_number, IRI_GPIO_SLP_OFF);
+    if (err != ESP_OK) {
+        return SAT_ERROR;
+    }
+
+    return SAT_OK;
+}
 
 iridium_status_t iridium_config(iridium_t *satcom) {
+    /* 
+        Check SLP pin is configured
+    */
+    if (satcom->gpio_sleep_pin_number != -1) {
+        gpio_config_t slp_conf;
+        slp_conf.intr_type = GPIO_INTR_DISABLE;
+        slp_conf.mode = GPIO_MODE_OUTPUT;
+        slp_conf.pin_bit_mask = ((1ULL<<satcom->gpio_sleep_pin_number) | (1ULL<<satcom->gpio_sleep_pin_number));
+        slp_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+        slp_conf.pull_up_en = GPIO_PULLDOWN_ENABLE;
+
+        esp_err_t err = gpio_config(&slp_conf);
+        if (err != ESP_OK) {
+            return SAT_ERROR;
+        }
+
+        /* turn on modem */
+        vTaskDelay(pdMS_TO_TICKS(IRI_GPIO_CONF_BUFF));
+        gpio_set_level(satcom->gpio_sleep_pin_number, IRI_GPIO_SLP_ON);
+    }
+
+
     /*
         Baud Rate = 19200 Data Bits = 8 Parity = N Stop Bits = 1
     */
@@ -672,17 +721,6 @@ iridium_status_t iridium_config(iridium_t *satcom) {
     /* AT check */
     iridium_result_t r;
     r = iridium_send(satcom, AT, NULL, true, 500);
-    if (r.status != SAT_OK) {
-        return r.status;
-    }
-
-    /* AT system details */
-    r = iridium_send(satcom, AT_CGMI, NULL, true, 500);
-    if (r.status != SAT_OK) {
-        return r.status;
-    }
-
-    r = iridium_send(satcom, AT_CGMM, NULL, true, 500);
     if (r.status != SAT_OK) {
         return r.status;
     }

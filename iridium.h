@@ -16,6 +16,7 @@ extern "C" {
 #include <stdlib.h>
 #include <assert.h>
 #include <pthread.h>
+#include <inttypes.h>
 
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
@@ -35,6 +36,9 @@ extern "C" {
 #define IRI_BUF_SIZE    (4096)
 #define IRI_RD_BUF_SIZE (IRI_BUF_SIZE)
 #define IRI_BUFF_DELAY  (100)
+#define IRI_GPIO_CONF_BUFF (100)
+#define IRI_GPIO_SLP_ON 1
+#define IRI_GPIO_SLP_OFF 0
 
 /**
  * @brief the enum to represent the AT commands. 
@@ -157,6 +161,8 @@ typedef struct iridium {
     /* callbacks */ 
     void (*callback) (struct iridium* satcom, iridium_command_t command, iridium_status_t status);
     void (*message_callback) (struct iridium* satcom, char* data);
+    /* gpio pins */
+    int gpio_sleep_pin_number;
 } iridium_t;
 
 /**
@@ -184,11 +190,11 @@ typedef void (*callback_t) (iridium_t* satcom, iridium_command_t command, iridiu
 typedef void (*message_callback_t) (iridium_t* satcom, char* data);
 
 /**
- * @brief Process data returned to device from UART bus.
+ * @brief Process data returned to device from UART bus. 
  * @param satcom the iridium_t struct pointer.
  * @param command the AT command being processed.
  * @param data the data returned to be parsed into iridium_t struct.
- * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR value.
  */
 iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command, char *data);
 
@@ -196,7 +202,7 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
  * @brief Update the iridium queue status. 
  * @param satcom the iridium_t struct pointer.
  * @param status the current IQS status.
- * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR value.
  */
 iridium_status_t iridium_update_iqs(iridium_t* satcom, iridium_queue_status_t status);
 
@@ -204,14 +210,14 @@ iridium_status_t iridium_update_iqs(iridium_t* satcom, iridium_queue_status_t st
  * @brief Update the processing message nonce. 
  * @param satcom the iridium_t struct pointer.
  * @param nonce the message nonce int.
- * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR value.
  */
 iridium_status_t iridium_update_p_nonce(iridium_t* satcom, int nonce);
 
 /**
  * @brief Retrieves the current queue status while processing a message nonce. 
  * @param satcom the iridium_t struct pointer.
- * @return a iridium_queue_status_t with IQS_NONE, IQS_OPEN or IQS_WAITING.
+ * @return a iridium_queue_status_t with IQS_NONE, IQS_OPEN or IQS_WAITING value.
  */
 iridium_queue_status_t iridium_get_iqs(iridium_t* satcom); 
 
@@ -220,7 +226,7 @@ iridium_queue_status_t iridium_get_iqs(iridium_t* satcom);
  * @param satcom the iridium_t struct pointer.
  * @param data the data to be sent. 
  * @param nonce the nonce used to track responses. 
- * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR value.
  */
 iridium_status_t iridium_send_raw(iridium_t* satcom, char *data, int nonce);
 
@@ -231,14 +237,14 @@ iridium_status_t iridium_send_raw(iridium_t* satcom, char *data, int nonce);
  * @param rdata the raw data. 
  * @param wait_response wait for a responce from the modem.
  * @param wait_interval the amount of time in ms for wait interval check.
- * @return a iridium_result_t with SAT_OK or SAT_ERROR with metadata.
+ * @return a iridium_result_t with metadata.
  */
 iridium_result_t iridium_send(iridium_t* satcom, iridium_command_t command, char *rdata, bool wait_response, int wait_interval);
 
 /**
  * @brief Configure iridium modem via UART connection. 
  * @param satcom the iridium_t struct pointer.
- * @return a iridium_status_t with SAT_OK or SAT_ERROR.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR value.
  */
 iridium_status_t iridium_config(iridium_t *satcom);
 
@@ -246,7 +252,7 @@ iridium_status_t iridium_config(iridium_t *satcom);
  * @brief Enabled or disable the ring notification on the modem.  
  * @param satcom the iridium_t struct pointer.
  * @param enabled the ring notification.
- * @return a iridium_result_t with SAT_OK or SAT_ERROR with metadata.
+ * @return a iridium_result_t with metadata.
  */
 iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled);
 
@@ -254,7 +260,7 @@ iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled);
  * @brief Transmit a message to the iridium network.
  * @param satcom the iridium_t struct pointer.
  * @param message to be sent.
- * @return a iridium_result_t with SAT_OK or SAT_ERROR with metadata.
+ * @return a iridium_result_t with metadata.
  */
 iridium_result_t iridium_tx_message(iridium_t *satcom, char *message);
 
@@ -263,6 +269,18 @@ iridium_result_t iridium_tx_message(iridium_t *satcom, char *message);
  * @return a valid iridium_t struct configuration.
  */
 iridium_t* iridium_default_configuration();
+
+/**
+ * @brief Modem specs.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR value.
+ */
+iridium_status_t iridium_system_spec(iridium_t *satcom);
+
+/**
+ * @brief Toggle modem to sleep.
+ * @return a iridium_status_t with SAT_OK or SAT_ERROR value.
+ */
+iridium_status_t iridium_modem_sleep(iridium_t *satcom);
 
 #ifdef __cplusplus
 }
