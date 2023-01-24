@@ -52,3 +52,9 @@ Mkfile.old
 dkms.conf
 
 build/
+
+# VS Code
+.vscode
+
+# IDF 
+.pytest_cache
