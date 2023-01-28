@@ -124,21 +124,17 @@ void app_main(void)
     }
 
     /* Allow Ring Triggers */
-    /*iridium_result_t ring = iridium_config_ring(satcom, true);
+    iridium_result_t ring = iridium_config_ring(satcom, true);
     if (ring.status == SAT_OK) {
         ESP_LOGI(TAG, "Iridium Modem [Ring Enabled]");
-    }*/
+    }
 
-    /*if(iridium_modem_sleep(satcom) == SAT_OK) {
-        ESP_LOGI(TAG, "R[OFF] Modem");
-    }*/              
+    /* Loop */          
     for(;;) {
-        ESP_LOGI(TAG,"LOOP START");
         iridium_result_t r1 = iridium_send(satcom, AT_CSQ, "", true, 500);
         if (r1.status == SAT_OK) {
             ESP_LOGI(TAG, "R[%d] = %s", r1.status, r1.result);
         }   
-        ESP_LOGI(TAG,"LOOP END");   
         vTaskDelay(pdMS_TO_TICKS(60000));
     }
 }
