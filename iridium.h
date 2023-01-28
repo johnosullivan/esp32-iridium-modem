@@ -26,8 +26,8 @@ extern "C" {
 #include "esp_event.h"
 #include "nvs_flash.h"
 #include "esp_system.h"
-#include "esp_spi_flash.h"
-#include "driver/uart.h"
+#include "spi_flash_mmap.h" // or #include "esp_spi_flash.h"
+#include "driver/uart.h" 
 #include "driver/gpio.h"
 #include "freertos/queue.h"
 
@@ -163,6 +163,7 @@ typedef struct iridium {
     void (*message_callback) (struct iridium* satcom, char* data);
     /* gpio pins */
     int gpio_sleep_pin_number;
+    int gpio_net_pin_number;
 } iridium_t;
 
 /**
