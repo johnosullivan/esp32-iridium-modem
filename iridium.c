@@ -429,7 +429,6 @@ void uart_satcom_task(void *pvParameters) {
     iridium_t* satcom = (iridium_t *)pvParameters;
     uint8_t* dtmp = (uint8_t*) malloc(IRI_RD_BUF_SIZE);
     uart_event_t event;
-    ESP_LOGI(TAG_IRIDIUM, "uart_satcom_task_start");
     struct stack_t *s = newStack();
     for(;;) {
         if(xQueueReceive(satcom->uart_queue, (void * )&event, (portTickType)portMAX_DELAY)) {
