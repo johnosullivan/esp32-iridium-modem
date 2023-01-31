@@ -9,7 +9,6 @@
 #include <pthread.h>
 
 #include "sdkconfig.h"
-
 #include "nvs.h"
 
 #include "freertos/FreeRTOS.h"
@@ -29,6 +28,10 @@
 #include "driver/gpio.h"
 
 #include "../../../iridium.h"
+
+#include "led_strip.h"
+
+#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 
 static const char *TAG = "iridium_examples";
 
@@ -60,15 +63,10 @@ void cb_satcom(iridium_t* satcom, iridium_command_t command, iridium_status_t st
 
 void cb_message(iridium_t* satcom, char* data) { 
     ESP_LOGI(TAG, "CALLBACK[INCOMING] %s", data);
+}
 
-    if (strcmp ("PING", data) == 0) {
-        iridium_result_t r1 = iridium_tx_message(satcom, "PONG");
-        if (r1.status != SAT_OK) {
-            ESP_LOGI(TAG, "R[%d] TX Failed!", r1.status);
-        } else {
-            ESP_LOGI(TAG, "R[%d] = %s", r1.status, r1.result);
-        }
-    }
+static void configure_led(void) {
+
 }
 
 void app_main(void)
@@ -104,7 +102,7 @@ void app_main(void)
 
     /* Create FreeRTOS Monitoring Task */
     xTaskCreatePinnedToCore(&system_monitoring_task, "system_monitoring_task", 2048, NULL, 1, NULL, 1);
-
+    
     /* Configuration Iridium SatCom */
     iridium_t *satcom = iridium_default_configuration();
     satcom->callback = &cb_satcom;
@@ -128,6 +126,9 @@ void app_main(void)
     if (ring.status == SAT_OK) {
         ESP_LOGI(TAG, "Iridium Modem [Ring Enabled]");
     }
+
+    /* Setup Built-In Addressable RGB LED, driven by GPIO38. */ 
+    configure_led();
 
     /* Loop */          
     for(;;) {
