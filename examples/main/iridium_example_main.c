@@ -31,8 +31,6 @@
 
 #include "led_strip.h"
 
-#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
-
 static const char *TAG = "iridium_examples";
 
 void system_monitoring_task(void *pvParameter) {
