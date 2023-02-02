@@ -29,13 +29,11 @@
 
 #include "../../../iridium.h"
 
-#include "led_strip.h"
-
 static const char *TAG = "iridium_examples";
 
 void system_monitoring_task(void *pvParameter) {
     ESP_LOGI(TAG, "System [system_monitoring_task]");
-
+    
     for(;;) {
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
