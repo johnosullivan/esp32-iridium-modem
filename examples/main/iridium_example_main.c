@@ -1,7 +1,10 @@
 /*
- * SPDX-FileCopyrightText: 2010-2023 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2010-2023 Espressif Systems (Shanghai) CO LTD AUTO-GEN
  *
- * SPDX-License-Identifier: CC0-1.0
+ * SPDX-License-Identifier: MIT
+ * 
+ * 2022-2023 John O'Sullivan
+ * 
  */
 
 #include <stdio.h>
@@ -22,21 +25,51 @@
 #include "nvs_flash.h"
 #include "esp_system.h"
 
-#include "spi_flash_mmap.h" // #include "esp_spi_flash.h"
+#include "spi_flash_mmap.h" // or #include "esp_spi_flash.h"
 
 #include "driver/uart.h"
 #include "driver/gpio.h"
+#include "driver/rmt_tx.h"
+
+#include "led_strip_encoder.h"
 
 #include "../../../iridium.h"
 
+// 10MHz resolution, 1 tick = 0.1us (led needs a high resolution)
+#define RMT_LED_STRIP_RESOLUTION_HZ 10000000
+#define RMT_LED_STRIP_GPIO_NUM      48
+
+static uint8_t led_pixels[3];
+
+rmt_channel_handle_t led_channel = NULL;
+rmt_encoder_handle_t led_encoder = NULL;
+rmt_transmit_config_t tx_config = {
+    .loop_count = 0,
+};
+
 static const char *TAG = "iridium_examples";
 
-void system_monitoring_task(void *pvParameter) {
-    ESP_LOGI(TAG, "System [system_monitoring_task]");
-    
-    for(;;) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
-    }
+static void configure_led(void) {
+    rmt_tx_channel_config_t tx_chan_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT, 
+        .gpio_num = RMT_LED_STRIP_GPIO_NUM,
+        .mem_block_symbols = 64, 
+        .resolution_hz = RMT_LED_STRIP_RESOLUTION_HZ,
+        .trans_queue_depth = 4,
+    };
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &led_channel));
+
+    led_strip_encoder_config_t encoder_config = {
+        .resolution = RMT_LED_STRIP_RESOLUTION_HZ,
+    };
+    ESP_ERROR_CHECK(rmt_new_led_strip_encoder(&encoder_config, &led_encoder));
+    ESP_ERROR_CHECK(rmt_enable(led_channel));
+}
+
+void update_led_pixels(uint8_t green, uint8_t red, uint8_t blue) {
+    led_pixels[0] = green;    // green
+    led_pixels[1] = red;      // red
+    led_pixels[2] = blue;     // blue
 }
 
 void cb_satcom(iridium_t* satcom, iridium_command_t command, iridium_status_t status) { 
@@ -44,6 +77,27 @@ void cb_satcom(iridium_t* satcom, iridium_command_t command, iridium_status_t st
         switch (command) {
             case AT_CSQ:
                 ESP_LOGI(TAG, "Signal Strength [0-5]: %d", satcom->signal_strength);
+                switch (satcom->signal_strength) {
+                case 1:
+                    update_led_pixels(128, 255, 0);
+                    break;
+                case 2:
+                    update_led_pixels(255, 255, 0);
+                    break;
+                case 3:
+                    update_led_pixels(255, 128, 0);
+                    break;
+                case 4:
+                    update_led_pixels(255, 0, 255);
+                    break;
+                case 5:
+                    update_led_pixels(255, 0, 0);
+                    break;
+                default:
+                    memset(led_pixels, 0, sizeof(led_pixels)); // reset the led_pixels  
+                    break;
+                }
+                ESP_ERROR_CHECK(rmt_transmit(led_channel, led_encoder, led_pixels, sizeof(led_pixels), &tx_config));
                 break;
             case AT_CGMM:
                 ESP_LOGI(TAG, "Model Identification: %s", satcom->model_identification);
@@ -61,8 +115,12 @@ void cb_message(iridium_t* satcom, char* data) {
     ESP_LOGI(TAG, "CALLBACK[INCOMING] %s", data);
 }
 
-static void configure_led(void) {
-
+void system_monitoring_task(void *pvParameter) {
+    ESP_LOGI(TAG, "System [system_monitoring_task]");
+    
+    for(;;) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
 }
 
 void app_main(void)
@@ -132,6 +190,6 @@ void app_main(void)
         if (r1.status == SAT_OK) {
             ESP_LOGI(TAG, "R[%d] = %s", r1.status, r1.result);
         }   
-        vTaskDelay(pdMS_TO_TICKS(60000));
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }
