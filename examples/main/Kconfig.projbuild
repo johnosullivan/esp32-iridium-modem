@@ -1,0 +1,59 @@
+menu "Iridium Configuration"
+
+    config RMT_LED_STRIP_RESOLUTION_HZ
+        int "RMT LED_STRIP RESOLUTION HZ"
+        range 0 100000000
+        default 10000000
+        help
+            RMT LED_STRIP RESOLUTION HZ: 0-100000000
+
+    config RMT_LED_STRIP_GPIO_NUM
+        int "RMT LED_STRIP GPIO_NUM"
+        range 0 255
+        default 0
+        help
+            RMT LED_STRIP GPIO_NUM: 0-255
+
+    config RMT_LED_STRIP_COUNT
+        int "RMT LED_STRIP COUNT"
+        range 0 255
+        default 1
+        help
+            RMT LED_STRIP COUNT: 0-255
+
+    config UART_NUMBER
+        int "UART_NUMBER"
+        range 0 255
+        default 0
+        help
+            UART_NUMBER: 0-255
+    
+    config UART_TX_GPIO_NUM
+        int "UART_TX_GPIO_NUM"
+        range 0 255
+        default 0
+        help
+            UART_TX_GPIO_NUM: 0-255
+
+    config UART_RX_GPIO_NUM
+        int "UART_RX_GPIO_NUM"
+        range 0 255
+        default 0
+        help
+            UART_RX_GPIO_NUM: 0-255
+
+    config UART_SLEEP_GPIO_NUM
+        int "UART_SLEEP_GPIO_NUM"
+        range 0 255
+        default 0
+        help
+            UART_SLEEP_GPIO_NUM: 0-255
+    
+    config UART_NET_GPIO_NUM
+        int "UART_NET_GPIO_NUM"
+        range 0 255
+        default 0
+        help
+            UART_NET_GPIO_NUM: 0-255
+
+endmenu

@@ -35,21 +35,35 @@
 
 #include "../../../iridium.h"
 
-// 10MHz resolution, 1 tick = 0.1us (led needs a high resolution)
-#define RMT_LED_STRIP_RESOLUTION_HZ 10000000
-#define RMT_LED_STRIP_GPIO_NUM      48
+static const char *TAG = "iridium_examples";
 
-static uint8_t led_pixels[3];
+// RMT configs, default 10MHz resolution, 1 tick = 0.1us (led needs a high resolution)
+#define RMT_LED_STRIP_RESOLUTION_HZ CONFIG_RMT_LED_STRIP_RESOLUTION_HZ
+#define RMT_LED_STRIP_GPIO_NUM      CONFIG_RMT_LED_STRIP_GPIO_NUM
+#define RMT_LED_STRIP_COUNT         CONFIG_RMT_LED_STRIP_COUNT
 
+// UART configs, defaults all zero, requires "idf.py menuconfig" > "Iridium Configuration" update
+#define UART_NUMBER                 CONFIG_UART_NUMBER
+#define UART_TX_GPIO_NUM            CONFIG_UART_TX_GPIO_NUM
+#define UART_RX_GPIO_NUM            CONFIG_UART_RX_GPIO_NUM
+#define UART_SLEEP_GPIO_NUM         CONFIG_UART_SLEEP_GPIO_NUM
+#define UART_NET_GPIO_NUM           CONFIG_UART_NET_GPIO_NUM
+
+// LED pixels representation as count * (green, red, blue)
+static uint8_t led_pixels[RMT_LED_STRIP_COUNT * 3];
+
+// LED pixels rmt channel/encoder handles
 rmt_channel_handle_t led_channel = NULL;
 rmt_encoder_handle_t led_encoder = NULL;
 rmt_transmit_config_t tx_config = {
     .loop_count = 0,
 };
 
-static const char *TAG = "iridium_examples";
-
+/*
+* Configure the built-in addressable LED.
+*/
 static void configure_led(void) {
+    // config the rmt tx channel for built in LED
     rmt_tx_channel_config_t tx_chan_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT, 
         .gpio_num = RMT_LED_STRIP_GPIO_NUM,
@@ -58,7 +72,7 @@ static void configure_led(void) {
         .trans_queue_depth = 4,
     };
     ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &led_channel));
-
+    // config the LED encoder
     led_strip_encoder_config_t encoder_config = {
         .resolution = RMT_LED_STRIP_RESOLUTION_HZ,
     };
@@ -66,12 +80,18 @@ static void configure_led(void) {
     ESP_ERROR_CHECK(rmt_enable(led_channel));
 }
 
+/*
+* Set the LED pixels (green,red,blue) 0-255.
+*/
 void update_led_pixels(uint8_t green, uint8_t red, uint8_t blue) {
     led_pixels[0] = green;    // green
     led_pixels[1] = red;      // red
     led_pixels[2] = blue;     // blue
 }
 
+/*
+* The iridium satellite callback function for TX AT commands. 
+*/
 void cb_satcom(iridium_t* satcom, iridium_command_t command, iridium_status_t status) { 
     if (status == SAT_OK) {
         switch (command) {
@@ -79,22 +99,22 @@ void cb_satcom(iridium_t* satcom, iridium_command_t command, iridium_status_t st
                 ESP_LOGI(TAG, "Signal Strength [0-5]: %d", satcom->signal_strength);
                 switch (satcom->signal_strength) {
                 case 1:
-                    update_led_pixels(128, 255, 0);
+                    update_led_pixels(128, 255, 0);    // status orange
                     break;
                 case 2:
-                    update_led_pixels(255, 255, 0);
+                    update_led_pixels(255, 255, 0);    // status yellow
                     break;
                 case 3:
-                    update_led_pixels(255, 128, 0);
+                    update_led_pixels(255, 128, 0);    // status light/green/blue
                     break;
                 case 4:
-                    update_led_pixels(255, 0, 255);
+                    update_led_pixels(255, 0, 255);    // status green/blue
                     break;
                 case 5:
-                    update_led_pixels(255, 0, 0);
+                    update_led_pixels(255, 0, 0);      // status green
                     break;
                 default:
-                    memset(led_pixels, 0, sizeof(led_pixels)); // reset the led_pixels  
+                    memset(led_pixels, 0, sizeof(led_pixels)); // reset the led_pixels - status no color 
                     break;
                 }
                 ESP_ERROR_CHECK(rmt_transmit(led_channel, led_encoder, led_pixels, sizeof(led_pixels), &tx_config));
@@ -111,6 +131,9 @@ void cb_satcom(iridium_t* satcom, iridium_command_t command, iridium_status_t st
     }
 }
 
+/*
+* The iridium satellite callback function for inbound messages. 
+*/
 void cb_message(iridium_t* satcom, char* data) { 
     ESP_LOGI(TAG, "CALLBACK[INCOMING] %s", data);
 }
@@ -123,6 +146,9 @@ void system_monitoring_task(void *pvParameter) {
     }
 }
 
+/*
+* Main app entry point for the ESP32 runtime. 
+*/
 void app_main(void)
 {
     /* Print chip information */
@@ -162,13 +188,13 @@ void app_main(void)
     satcom->callback = &cb_satcom;
     satcom->message_callback = &cb_message;
     /* UART Port Configuration */
-    satcom->uart_number = UART_NUM_1;
-    satcom->uart_txn_number = GPIO_NUM_17;
-    satcom->uart_rxd_number = GPIO_NUM_18;
+    satcom->uart_number = UART_NUMBER;
+    satcom->uart_txn_number = UART_TX_GPIO_NUM;
+    satcom->uart_rxd_number = UART_RX_GPIO_NUM;
     satcom->uart_rts_number = UART_PIN_NO_CHANGE;
     satcom->uart_cts_number = UART_PIN_NO_CHANGE;
-    satcom->gpio_sleep_pin_number = GPIO_NUM_46;
-    satcom->gpio_net_pin_number = GPIO_NUM_21;
+    satcom->gpio_sleep_pin_number = UART_SLEEP_GPIO_NUM;
+    satcom->gpio_net_pin_number = UART_NET_GPIO_NUM;
     
     /* Initialized */
     if (iridium_config(satcom) == SAT_OK) {
