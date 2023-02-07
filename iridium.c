@@ -179,7 +179,7 @@ iridium_queue_status_t iridium_get_iqs(iridium_t* satcom) {
 iridium_status_t iridium_send_raw(iridium_t* satcom, char *data, int nonce) {
     if (satcom->status == IQS_WAITING) {
         // send iridium_message_t to buffer queue
-        ESP_LOGI(TAG_IRIDIUM, "IN_BUFFER_QUEUE[%d]", nonce);
+        ESP_LOGI(TAG_IRIDIUM, "IN_BUFFER_QUEUE[%d] = %s", nonce, data);
         iridium_message_t msg;
         strcpy(msg.data, data);
         msg.size = strlen(data);
@@ -187,6 +187,7 @@ iridium_status_t iridium_send_raw(iridium_t* satcom, char *data, int nonce) {
         xQueueSend(satcom->buffer_queue, (void *)&msg, 10);
         return SAT_OK;  
     }
+    ESP_LOGI(TAG_IRIDIUM, "SENT_TO_UART_1[%d] = %s", nonce, data);
     /* transmit data via UART */
     uart_write_bytes(satcom->uart_number, data, strlen(data));
     /* update IQS */
@@ -381,7 +382,7 @@ iridium_result_t iridium_send(iridium_t* satcom, iridium_command_t command, char
         }
 
         strcpy(result.result, satcom->buffer_data);
-        ESP_LOGD(TAG_IRIDIUM, "WAIT_DONE_NONCE = [%d]", t_nonce);
+        ESP_LOGI(TAG_IRIDIUM, "WAIT_DONE_NONCE = [%d]", t_nonce);
     }
 
     result.status = SAT_OK;
@@ -398,7 +399,7 @@ void ring_satcom_task(void *pvParameters) {
     for(;;) {
         iridium_result_t r1 = iridium_send(satcom, AT_SBDIXA, "", true, 500);
         if (r1.status == SAT_OK) {
-            ESP_LOGD(TAG_IRIDIUM, "RST_R1[%d] = %s", r1.status, r1.result);
+            ESP_LOGI(TAG_IRIDIUM, "RST_R1[%d] = %s", r1.status, r1.result);
         }
         if (satcom->status_outbound == MO_TRANSFERRED_SUCCESSFULLY ||
             satcom->status_outbound == MO_TRANSFERRED_SUCCESSFULLY_TOO_BIG ||
@@ -409,7 +410,7 @@ void ring_satcom_task(void *pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(5000));
             iridium_result_t r2 = iridium_send(satcom, AT_SBDRT, NULL, true, 500);
             if (r2.status == SAT_OK) {
-                ESP_LOGD(TAG_IRIDIUM, "RST_R2[%d] = %s", r2.status, r2.result);
+                ESP_LOGI(TAG_IRIDIUM, "RST_R2[%d] = %s", r2.status, r2.result);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10000));
@@ -417,7 +418,7 @@ void ring_satcom_task(void *pvParameters) {
 
     iridium_result_t r2 = iridium_send(satcom, AT_SBDRT, NULL, true, 500);
     if (r2.status == SAT_OK) {
-        ESP_LOGD(TAG_IRIDIUM, "RST_R3[%d] = %s", r2.status, r2.result);
+        ESP_LOGI(TAG_IRIDIUM, "RST_R3[%d] = %s", r2.status, r2.result);
     }
 
     satcom->ring_task_running = 0;
@@ -436,7 +437,7 @@ void uart_satcom_task(void *pvParameters) {
                 case UART_DATA:
                     uart_read_bytes(satcom->uart_number, dtmp, event.size, portMAX_DELAY);
                     
-                    ESP_LOGD(TAG_IRIDIUM, "R:%s-", dtmp);
+                    ESP_LOGI(TAG_IRIDIUM, "R:%s-", dtmp);
 
                     char* pch = NULL;
                     pch = strtok((char*)dtmp, "\r\n");
@@ -470,7 +471,7 @@ void uart_satcom_task(void *pvParameters) {
                                     // Grab top value / pop
                                     char* tmp = top(s);
 
-                                    ESP_LOGD(TAG_IRIDIUM, "TMP:[%s]", tmp); 
+                                    ESP_LOGI(TAG_IRIDIUM, "TMP:[%s]", tmp); 
                                     if (startsWith("AT", tmp)) {
                                          strcpy(command, tmp);
                                     } else {
@@ -479,13 +480,13 @@ void uart_satcom_task(void *pvParameters) {
                                     pop(s);
                                 }
 
-                                ESP_LOGD(TAG_IRIDIUM, "P: %s = %s", command, data);
+                                ESP_LOGI(TAG_IRIDIUM, "P: %s = %s", command, data);
                                 strcpy(satcom->buffer_data, data);
 
                                 if (iridium_satcom_process_result(satcom, command, data) == SAT_OK) {
-                                    ESP_LOGD(TAG_IRIDIUM, "OK_R[%d]: %s = %s ", satcom->p_nonce, command, pch); 
+                                    ESP_LOGI(TAG_IRIDIUM, "OK_R[%d]: %s = %s ", satcom->p_nonce, command, pch); 
                                 } else {
-                                    ESP_LOGD(TAG_IRIDIUM, "ERROR_R[%d]: %s = %s ", satcom->p_nonce, command, pch); 
+                                    ESP_LOGI(TAG_IRIDIUM, "ERROR_R[%d]: %s = %s ", satcom->p_nonce, command, pch); 
                                 }
                                 /* Clean up after AT processing */
                                 clear_stack(s);
@@ -535,6 +536,7 @@ void buffer_satcom_task(void *pvParameters) {
         if (t_status == IQS_OPEN) {
             iridium_message_t rcv_msg;
             if (xQueueReceive(satcom->buffer_queue, (void *)&rcv_msg, 0) == pdTRUE) {
+                ESP_LOGI(TAG_IRIDIUM, "SENT_TO_UART_FROM_BUFFER[%d] = %s", rcv_msg.nonce, rcv_msg.data);
                 iridium_send_raw(satcom, rcv_msg.data, rcv_msg.nonce);
             }
         }

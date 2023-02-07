@@ -37,27 +37,29 @@
 
 static const char *TAG = "iridium_examples";
 
-// RMT configs, default 10MHz resolution, 1 tick = 0.1us (led needs a high resolution)
+/* RMT configs, default 10MHz resolution, 1 tick = 0.1us (led needs a high resolution) */
 #define RMT_LED_STRIP_RESOLUTION_HZ CONFIG_RMT_LED_STRIP_RESOLUTION_HZ
 #define RMT_LED_STRIP_GPIO_NUM      CONFIG_RMT_LED_STRIP_GPIO_NUM
 #define RMT_LED_STRIP_COUNT         CONFIG_RMT_LED_STRIP_COUNT
 
-// UART configs, defaults all zero, requires "idf.py menuconfig" > "Iridium Configuration" update
+/* UART configs, defaults all zero, requires "idf.py menuconfig" > "Iridium Configuration" update */
 #define UART_NUMBER                 CONFIG_UART_NUMBER
 #define UART_TX_GPIO_NUM            CONFIG_UART_TX_GPIO_NUM
 #define UART_RX_GPIO_NUM            CONFIG_UART_RX_GPIO_NUM
 #define UART_SLEEP_GPIO_NUM         CONFIG_UART_SLEEP_GPIO_NUM
 #define UART_NET_GPIO_NUM           CONFIG_UART_NET_GPIO_NUM
 
-// LED pixels representation as count * (green, red, blue)
+/* LED pixels representation as count * (green, red, blue) */
 static uint8_t led_pixels[RMT_LED_STRIP_COUNT * 3];
 
-// LED pixels rmt channel/encoder handles
+/* LED pixels rmt channel/encoder handles */
 rmt_channel_handle_t led_channel = NULL;
 rmt_encoder_handle_t led_encoder = NULL;
 rmt_transmit_config_t tx_config = {
     .loop_count = 0,
 };
+
+iridium_t *satcom;
 
 /*
 * Configure the built-in addressable LED.
@@ -138,12 +140,22 @@ void cb_message(iridium_t* satcom, char* data) {
     ESP_LOGI(TAG, "CALLBACK[INCOMING] %s", data);
 }
 
-void system_monitoring_task(void *pvParameter) {
+void system_monitoring_task(void *pvParameters) {
     ESP_LOGI(TAG, "System [system_monitoring_task]");
-    
+
+    iridium_t* satcom = (iridium_t *)pvParameters;
     for(;;) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        if (gpio_get_level(GPIO_NUM_4) == 1) { 
+            ESP_LOGI(TAG, "SENDING");
+            /* example payload */
+            char *data = "39.2818624911";
+            iridium_tx_message(satcom, data); 
+            ESP_LOGI(TAG, "SENT");
+        }
+        vTaskDelay(1000);
     }
+
+    vTaskDelete(NULL);
 }
 
 /*
@@ -180,11 +192,12 @@ void app_main(void)
     printf("%" PRIu32 "MB %s \n", flash_size / (uint32_t)(1024 * 1024),
            (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "Embedded" : "External");
 
-    /* Create FreeRTOS Monitoring Task */
-    xTaskCreatePinnedToCore(&system_monitoring_task, "system_monitoring_task", 2048, NULL, 1, NULL, 1);
-    
+
+    /* Setup the button input send on press */
+    gpio_set_direction(GPIO_NUM_4, GPIO_MODE_INPUT);
+
     /* Configuration Iridium SatCom */
-    iridium_t *satcom = iridium_default_configuration();
+    satcom = iridium_default_configuration();
     satcom->callback = &cb_satcom;
     satcom->message_callback = &cb_message;
     /* UART Port Configuration */
@@ -196,6 +209,9 @@ void app_main(void)
     satcom->gpio_sleep_pin_number = UART_SLEEP_GPIO_NUM;
     satcom->gpio_net_pin_number = UART_NET_GPIO_NUM;
     
+    /* Create FreeRTOS Monitoring Task */
+    xTaskCreate(&system_monitoring_task, "system_monitoring_task", 4048, satcom, 12, NULL);
+
     /* Initialized */
     if (iridium_config(satcom) == SAT_OK) {
         ESP_LOGI(TAG, "Iridium Modem [Initialized]");
@@ -216,6 +232,6 @@ void app_main(void)
         if (r1.status == SAT_OK) {
             ESP_LOGI(TAG, "R[%d] = %s", r1.status, r1.result);
         }   
-        vTaskDelay(pdMS_TO_TICKS(30000));
+        vTaskDelay(pdMS_TO_TICKS(60000));
     }
 }
