@@ -58,3 +58,4 @@ build/
 
 # IDF 
 .pytest_cache
+managed_components
