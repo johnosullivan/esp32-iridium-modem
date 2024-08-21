@@ -59,3 +59,7 @@ build/
 # IDF 
 .pytest_cache
 managed_components
+
+# IDEs
+.idea
+.DS_Store

@@ -60,7 +60,6 @@ typedef enum iridium_command {
     AT_SBDIXA       = 12,
     AT_K0           = 13,
     AT_SBDMTAQ      = 14,
-
 } iridium_command_t;
 
 /**
