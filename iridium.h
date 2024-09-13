@@ -230,7 +230,7 @@ iridium_queue_status_t iridium_get_iqs(iridium_t* satcom);
  */
 iridium_status_t iridium_send_raw(iridium_t* satcom, char *data, int nonce);
 
-/**
+/** 
  * @brief Send AT command with data.  
  * @param satcom the iridium_t struct pointer.
  * @param command the iridium modem AT command.
