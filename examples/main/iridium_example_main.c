@@ -199,7 +199,7 @@ void app_main(void)
     /* Configuration Iridium SatCom */
     satcom = iridium_default_configuration();
     satcom->callback = &cb_satcom;
-    satcom->message_callback = &cb_message;*/
+    satcom->message_callback = &cb_message;
     /* UART Port Configuration */
     satcom->uart_number = UART_NUMBER;
     satcom->uart_txn_number = UART_TX_GPIO_NUM;
@@ -218,21 +218,20 @@ void app_main(void)
     }
 
     /* Allow Ring Triggers */
-    /*iridium_result_t ring = iridium_config_ring(satcom, true);
+    iridium_result_t ring = iridium_config_ring(satcom, true);
     if (ring.status == SAT_OK) {
         ESP_LOGI(TAG, "Iridium Modem [Ring Enabled]");
-    }*/
+    }
 
     /* Setup Built-In Addressable RGB LED, driven by GPIO38. */ 
-    //configure_led();
+    configure_led();
 
     /* Loop */          
     for(;;) {
-        /*iridium_result_t r1 = iridium_send(satcom, AT_CSQ, "", true, 500);
+        iridium_result_t r1 = iridium_send(satcom, AT_CSQ, "", true, 500);
         if (r1.status == SAT_OK) {
             ESP_LOGI(TAG, "R[%d] = %s", r1.status, r1.result);
-        }*/
+        }
         vTaskDelay(pdMS_TO_TICKS(60000));
-        ESP_LOGI(TAG, "Hello World!");
     }
 }
