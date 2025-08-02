@@ -145,14 +145,13 @@ void system_monitoring_task(void *pvParameters) {
 
     iridium_t* satcom = (iridium_t *)pvParameters;
     for(;;) {
-        if (gpio_get_level(GPIO_NUM_4) == 1) { 
+        /*if (gpio_get_level(GPIO_NUM_4) == 1) { 
             ESP_LOGI(TAG, "SENDING");
-            /* example payload */
             char *data = "39.2818624911";
             iridium_tx_message(satcom, data); 
             ESP_LOGI(TAG, "SENT");
         }
-        vTaskDelay(1000);
+        vTaskDelay(1000);*/
     }
 
     vTaskDelete(NULL);
@@ -210,7 +209,7 @@ void app_main(void)
     satcom->gpio_net_pin_number = UART_NET_GPIO_NUM;
     
     /* Create FreeRTOS Monitoring Task */
-    xTaskCreate(&system_monitoring_task, "system_monitoring_task", 4048, satcom, 12, NULL);
+    //xTaskCreate(&system_monitoring_task, "system_monitoring_task", 4048, satcom, 12, NULL);
 
     /* Initialized */
     if (iridium_config(satcom) == SAT_OK) {
