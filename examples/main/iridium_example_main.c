@@ -136,8 +136,8 @@ void cb_satcom(iridium_t* satcom, iridium_command_t command, iridium_status_t st
 /*
 * The iridium satellite callback function for inbound messages. 
 */
-void cb_message(iridium_t* satcom, char* data) { 
-    ESP_LOGI(TAG, "CALLBACK[INCOMING] %s", data);
+void cb_message(iridium_t* satcom, const char* data, size_t size) { 
+    ESP_LOGI(TAG, "CALLBACK[INCOMING] (%u bytes) %.*s", (unsigned)size, (int)size, data);
 }
 
 void system_monitoring_task(void *pvParameters) {

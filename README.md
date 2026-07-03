@@ -9,6 +9,22 @@ The purpose of this library is to provide a drop-in solution for interactions on
 - <a href="https://github.com/espressif/esp-idf/blob/master/tools/idf.py">ESP IDF</a>
 - <a href="https://www.freertos.org">FreeRTOS</a>
 
+## Building and flashing
+
+The example firmware lives in `examples/`. With [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/index.html) installed and sourced, you can build and flash from the repo root:
+
+```bash
+source ~/esp/esp-idf/export.sh   # if IDF_PATH is not already set
+./scripts/build-and-flash.sh
+```
+
+The script builds the example and flashes automatically when an ESP32 is detected at `/dev/cu.usbmodem*` (the default macOS native-USB naming, e.g. `/dev/cu.usbmodem1101`). If several `usbmodem` ports are present, it prompts you to choose one. With no `usbmodem` device, it falls back to any single serial port, or prompts when multiple are connected.
+
+Options:
+
+- `-m` / `--monitor` — flash, then open the serial monitor
+- `-s` / `--skip-build` — flash only (skip `idf.py build`)
+
 --- 
 
 ## Hardware
