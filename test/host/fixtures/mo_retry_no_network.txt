@@ -1,0 +1,4 @@
+# First SBDIX attempt with no network service (MO status 32)
+AT+SBDIX
++SBDIX: 32,0,0,0,0,0
+OK

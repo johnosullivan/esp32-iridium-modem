@@ -12,6 +12,7 @@
 
 #include "stack.h"
 #include "iridium.h"
+#include "iridium_parser.h"
 
 static const char *TAG_IRIDIUM = "esp32_iridium";
 
@@ -20,11 +21,30 @@ void uart_satcom_task(void *pvParameters);
 void buffer_satcom_task(void *pvParameters);
 void message_satcom_task(void *pvParameters);
 
-static bool starts_with(const char *pre, const char *str)
+static bool iridium_copy_bounded(char *dest, size_t dest_size, const char *src)
 {
-    size_t lenpre = strlen(pre);
-    size_t lenstr = strlen(str);
-    return lenstr >= lenpre && memcmp(pre, str, lenpre) == 0;
+    if (!iridium_parser_copy_string(dest, dest_size, src)) {
+        ESP_LOGW(TAG_IRIDIUM, "Truncated string to fit %u bytes", (unsigned)dest_size);
+        return false;
+    }
+    return true;
+}
+
+static bool iridium_apply_sbd_session(const char *data, iridium_t *satcom)
+{
+    iridium_sbd_session_t session;
+
+    if (!iridium_parser_sbd_session(data, &session)) {
+        return false;
+    }
+
+    satcom->status_outbound = session.mo_status;
+    satcom->sequence_outbound = session.momsn;
+    satcom->status_inbound = session.mt_status;
+    satcom->sequence_inbound = session.mtmsn;
+    satcom->bytes_received = session.mt_length;
+    satcom->messages_waiting = session.mt_queued;
+    return true;
 }
 
 static void iridium_invoke_callback(iridium_t *satcom, iridium_command_t command,
@@ -40,65 +60,6 @@ static void iridium_invoke_message_callback(iridium_t *satcom, const char *data,
     if (satcom != NULL && satcom->message_callback != NULL) {
         satcom->message_callback(satcom, data, size);
     }
-}
-
-static bool iridium_mo_transfer_ok(int mo_status)
-{
-    return mo_status == MO_TRANSFERRED_SUCCESSFULLY ||
-           mo_status == MO_TRANSFERRED_SUCCESSFULLY_TOO_BIG ||
-           mo_status == MO_TRANSFERRED_SUCCESSFULLY_LOC_NOT_ACCEPTED;
-}
-
-static const char *iridium_skip_prefix(const char *data)
-{
-    const char *colon = strchr(data, ':');
-    return colon != NULL ? colon + 1 : data;
-}
-
-static bool iridium_parse_sbd_status(const char *data, iridium_t *satcom)
-{
-    int mo = 0;
-    int momsn = 0;
-    int mt = 0;
-    int mtmsn = 0;
-    int mt_len = 0;
-    int mt_queued = 0;
-
-    if (sscanf(iridium_skip_prefix(data), " %d,%d,%d,%d,%d,%d",
-               &mo, &momsn, &mt, &mtmsn, &mt_len, &mt_queued) != 6) {
-        return false;
-    }
-
-    satcom->status_outbound = mo;
-    satcom->sequence_outbound = momsn;
-    satcom->status_inbound = mt;
-    satcom->sequence_inbound = mtmsn;
-    satcom->bytes_received = mt_len;
-    satcom->messages_waiting = mt_queued;
-    return true;
-}
-
-static bool iridium_copy_bounded(char *dest, size_t dest_size, const char *src)
-{
-    if (dest == NULL || dest_size == 0) {
-        return false;
-    }
-
-    if (src == NULL) {
-        dest[0] = '\0';
-        return true;
-    }
-
-    size_t src_len = strlen(src);
-    if (src_len >= dest_size) {
-        memcpy(dest, src, dest_size - 1);
-        dest[dest_size - 1] = '\0';
-        ESP_LOGW(TAG_IRIDIUM, "Truncated string to fit %u bytes", (unsigned)dest_size);
-        return false;
-    }
-
-    memcpy(dest, src, src_len + 1);
-    return true;
 }
 
 static bool iridium_wait_for_response(iridium_t *satcom, int nonce, int wait_interval_ms,
@@ -154,7 +115,7 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
     if (strcmp("AT", command) == 0 ||
         strcmp("AT&K0", command) == 0 ||
         strcmp("AT&w0", command) == 0 ||
-        starts_with("AT+SBDMTA", command)) {
+        iridium_parser_starts_with("AT+SBDMTA", command)) {
         return SAT_OK;
     }
 
@@ -174,7 +135,7 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
 
     if (strcmp("AT+CSQ", command) == 0) {
         int csq = 0;
-        if (sscanf(iridium_skip_prefix(data), " %d", &csq) != 1) {
+        if (!iridium_parser_csq(data, &csq)) {
             return SAT_ERROR;
         }
         satcom->signal_strength = csq;
@@ -183,7 +144,7 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
     }
 
     if (strcmp("AT+SBDSX", command) == 0) {
-        if (!iridium_parse_sbd_status(data, satcom)) {
+        if (!iridium_apply_sbd_session(data, satcom)) {
             return SAT_ERROR;
         }
         iridium_invoke_callback(satcom, AT_SBDSX, SAT_OK);
@@ -191,7 +152,7 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
     }
 
     if (strcmp("AT+SBDIX", command) == 0) {
-        if (!iridium_parse_sbd_status(data, satcom)) {
+        if (!iridium_apply_sbd_session(data, satcom)) {
             return SAT_ERROR;
         }
         iridium_invoke_callback(satcom, AT_SBDIX, SAT_OK);
@@ -199,7 +160,7 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
     }
 
     if (strcmp("AT+SBDIXA", command) == 0) {
-        if (!iridium_parse_sbd_status(data, satcom)) {
+        if (!iridium_apply_sbd_session(data, satcom)) {
             return SAT_ERROR;
         }
         iridium_invoke_callback(satcom, AT_SBDIXA, SAT_OK);
@@ -329,7 +290,7 @@ iridium_result_t iridium_tx_message(iridium_t *satcom, const char *message)
             return session_result;
         }
 
-        if (iridium_mo_transfer_ok(satcom->status_outbound)) {
+        if (iridium_parser_mo_transfer_ok(satcom->status_outbound)) {
             return iridium_make_ok(satcom->buffer_data);
         }
 
@@ -516,7 +477,7 @@ void ring_satcom_task(void *pvParameters)
                      satcom->status_outbound, satcom->status_inbound, satcom->messages_waiting);
         }
 
-        if (iridium_mo_transfer_ok(satcom->status_outbound)) {
+        if (iridium_parser_mo_transfer_ok(satcom->status_outbound)) {
             if (satcom->messages_waiting == 0) {
                 break;
             }
@@ -568,7 +529,7 @@ void uart_satcom_task(void *pvParameters)
 
                 for (char *line = strtok((char *)dtmp, "\r\n"); line != NULL;
                      line = strtok(NULL, "\r\n")) {
-                    if (starts_with("AT", line)) {
+                    if (iridium_parser_starts_with("AT", line)) {
                         push(s, line);
                         continue;
                     }
@@ -588,7 +549,7 @@ void uart_satcom_task(void *pvParameters)
 
                         while (top(s) != NULL) {
                             char *tmp = top(s);
-                            if (starts_with("AT", tmp)) {
+                            if (iridium_parser_starts_with("AT", tmp)) {
                                 iridium_copy_bounded(command, sizeof(command), tmp);
                             } else {
                                 size_t current_len = strlen(data);

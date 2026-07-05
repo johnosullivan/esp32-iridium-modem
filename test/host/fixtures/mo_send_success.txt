@@ -1,0 +1,6 @@
+# Successful MO transfer after SBDWT
+AT+SBDWT=hello
+OK
+AT+SBDIX
++SBDIX: 0,42,1,17,25,0
+OK
