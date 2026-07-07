@@ -2,186 +2,273 @@
 
 ## Overview
 
-The purpose of this library is to provide a drop-in solution for interactions on the Iridium Satellite network using AT commands. The library uses the ESP32 UART bus with different queues/pthread to manage messages in an asynchronous or synchronous way.
+Drop-in C library for Iridium Short Burst Data (SBD) on ESP32 over UART AT commands. The driver runs an async pipeline (UART reader, command buffer, message delivery) with optional synchronous wrappers for sending commands and waiting for responses.
 
-## Dependencies 
+Supported hardware: [RockBLOCK 9603](https://cdn-shop.adafruit.com/product-files/4521/RockBLOCK-9603-Data-Sheet-Small.pdf)
 
-- <a href="https://github.com/espressif/esp-idf/blob/master/tools/idf.py">ESP IDF</a>
-- <a href="https://www.freertos.org">FreeRTOS</a>
+## Dependencies
+
+- [ESP-IDF](https://github.com/espressif/esp-idf/blob/master/tools/idf.py)
+- [FreeRTOS](https://www.freertos.org)
+
+## Project layout
+
+| Path | Description |
+|------|-------------|
+| `iridium.c` / `iridium.h` | Main ESP32 driver |
+| `iridium_parser.c` / `iridium_parser.h` | Pure AT/SBD parsing (host-testable) |
+| `iridium_sim.c` / `iridium_sim.h` | Fixture replay / serial traffic simulator |
+| `stack.c` / `stack.h` | UART response line stack |
+| `examples/` | ESP-IDF example firmware |
+| `scripts/build-and-flash.sh` | Build and flash helper |
+| `scripts/modem_sim.py` | Python modem simulator for PTY testing |
+| `test/host/` | Host unit tests and fixtures |
 
 ## Building and flashing
 
-The example firmware lives in `examples/`. With [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/index.html) installed and sourced, you can build and flash from the repo root:
+The example firmware lives in `examples/`. With [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/index.html) installed and sourced:
 
 ```bash
 source ~/esp/esp-idf/export.sh   # if IDF_PATH is not already set
 ./scripts/build-and-flash.sh
 ```
 
-The script builds the example and flashes automatically when an ESP32 is detected at `/dev/cu.usbmodem*` (the default macOS native-USB naming, e.g. `/dev/cu.usbmodem1101`). If several `usbmodem` ports are present, it prompts you to choose one. With no `usbmodem` device, it falls back to any single serial port, or prompts when multiple are connected.
+The script builds the example and flashes when an ESP32 is detected at `/dev/cu.usbmodem*` (macOS native USB, e.g. `/dev/cu.usbmodem1101`). If several `usbmodem` ports are present, it prompts you to choose one. With no `usbmodem` device, it falls back to any single serial port, or prompts when multiple are connected.
 
 Options:
 
 - `-m` / `--monitor` — flash, then open the serial monitor
 - `-s` / `--skip-build` — flash only (skip `idf.py build`)
 
---- 
+## Testing
+
+Host tests run without hardware or ESP-IDF:
+
+```bash
+make test          # 19 unit tests (parser, framing, serial replay)
+make replay        # replay mo_send_success fixture, print parsed state
+make sim-dry-run   # preview Python modem traffic without a serial port
+```
+
+Replay any fixture:
+
+```bash
+./test/host/build/iridium_sim_replay test/host/fixtures/mt_ring_session.txt
+```
+
+To simulate a modem against real firmware over a virtual serial port, see [test/host/README.md](test/host/README.md).
+
+CI runs `make test` on every push and pull request via `.github/workflows/test.yml`.
+
+---
 
 ## Hardware
 
 ![Pinout](img/pinout.png)
 
-**NOTE**: The default serial baud rate is 19200 with most of the RockBlock pinouts operating on 3.3v logic. 
+**NOTE**: Default baud rate is 19200. Most RockBLOCK pinouts use 3.3 V logic.
 
-1) RXD -> Serial output from device
-2) CTS -> Clear to Send
-3) RTS -> Ready To Send
-4) NET -> Network Available
-5) RI -> Ring Indicator
-6) TXD -> Serial input to device
-7) SLP ->  Sleep control
-8) 5V -> 5V in power supply
-9) BAT -> 3.7V power supply
-10) GND -> Ground 
+| Pin | Function |
+|-----|----------|
+| RXD | Serial output from modem |
+| CTS | Clear to send |
+| RTS | Ready to send |
+| NET | Network available |
+| RI | Ring indicator |
+| TXD | Serial input to modem |
+| SLP | Sleep control |
+| 5V | 5 V power supply |
+| BAT | 3.7 V power supply |
+| GND | Ground |
 
-
-    
----
-
-## Documentation
-
-Construct an iridium satellite communication struct with callbacks.
-
-```c
-iridium_t *satcom = iridium_default_configuration();
-satcom->callback = &cb_satcom;
-satcom->message_callback = &cb_message;
-```
-
-Configure UART bus ports.
-
-```c
-/* UART Port Configuration */
-satcom->uart_number = UART_NUM_1;
-satcom->uart_txn_number = GPIO_NUM_17;
-satcom->uart_rxd_number = GPIO_NUM_18;
-satcom->uart_rts_number = UART_PIN_NO_CHANGE;
-satcom->uart_cts_number = UART_PIN_NO_CHANGE;
-```
-
-Setup satellite modem.
-
-```c
-iridium_config(satcom) // return SAT_OK or SAT_ERROR
-```
-
-Once a `SAT_OK` status is received from the satellite configuration, the following methods are available.
+RTS/CTS flow control is enabled automatically when both pins are configured (not `UART_PIN_NO_CHANGE`).
 
 ---
 
-Enabled or disable the ring notification on the modem.
-```c
-/**
- * @param satcom the iridium_t struct pointer.
- * @param enabled the ring notification.
- * @return a iridium_result_t with metadata.
- */
-iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled);
-```
-
----
-Transmit a message to the iridium network.
-```c
-/**
- * @param satcom the iridium_t struct pointer.
- * @param message to be sent.
- * @return a iridium_result_t with metadata.
- */
-iridium_result_t iridium_tx_message(iridium_t *satcom, char *message);
-```
-
----
-Send AT command with data.
-```c
-/**
- * @param satcom the iridium_t struct pointer.
- * @param command the iridium modem AT command.
- * @param rdata the raw data. 
- * @param wait_response wait for a responce from the modem.
- * @param wait_interval the amount of time in ms for wait interval check.
- * @return a iridium_result_t with metadata.
- */
-iridium_result_t iridium_send(iridium_t* satcom, iridium_command_t command, char *rdata, bool wait_response, int wait_interval);
-```
-
-## Example
+## Quick start
 
 ```c
 #include "iridium.h"
 
-static const char *TAG_CORE = "iridium_example";
+static const char *TAG = "iridium_app";
 
-/* Callbacks */
-void cb_satcom(iridium_t* satcom, iridium_command_t command, iridium_status_t status) { 
-    if (status == SAT_OK) {
-        switch (command) {
-            case AT_CSQ:
-                ESP_LOGI(TAG_CORE, "Signal Strength [0-5]: %d", satcom->signal_strength);
-                break;
-            case AT_CGMM:
-                ESP_LOGI(TAG_CORE, "Model Identification: %s", satcom->model_identification);
-                break;
-            case AT_CGMI:
-                ESP_LOGI(TAG_CORE, "Manufacturer Identification: %s", satcom->manufacturer_identification);
-                break;
-            default:
-                break;
-        }
+void cb_satcom(iridium_t *satcom, iridium_command_t command, iridium_status_t status)
+{
+    if (status != SAT_OK) {
+        return;
+    }
+    switch (command) {
+        case AT_CSQ:
+            ESP_LOGI(TAG, "Signal strength [0-5]: %d", satcom->signal_strength);
+            break;
+        case AT_SBDIX:
+            ESP_LOGI(TAG, "MO status: %d", satcom->status_outbound);
+            break;
+        default:
+            break;
     }
 }
 
-void cb_message(iridium_t* satcom, char* data) { 
-    ESP_LOGI(TAG_CORE, "MESSAGE[INCOMING] %s", data);
+void cb_message(iridium_t *satcom, const char *data, size_t size)
+{
+    ESP_LOGI(TAG, "Inbound message (%u bytes): %.*s",
+             (unsigned)size, (int)size, data);
 }
 
-/* Configuration Iridium SatCom */
-iridium_t *satcom = iridium_default_configuration();
-satcom->callback = &cb_satcom;
-satcom->message_callback = &cb_message;
-/* UART Port Configuration */
-satcom->uart_number = UART_NUM_1;
-satcom->uart_txn_number = GPIO_NUM_17;
-satcom->uart_rxd_number = GPIO_NUM_18;
-satcom->uart_rts_number = UART_PIN_NO_CHANGE;
-satcom->uart_cts_number = UART_PIN_NO_CHANGE;
-    
-/* Initialized */
-if (iridium_config(satcom) == SAT_OK) {
-    ESP_LOGI(TAG_CORE, "Iridium Modem [Initialized]");
-}
+void app_main(void)
+{
+    iridium_t *satcom = iridium_default_configuration();
+    satcom->callback = cb_satcom;
+    satcom->message_callback = cb_message;
 
-/* Allow Ring Triggers */
-iridium_result_t ring = iridium_config_ring(satcom, true);
-if (ring.status == SAT_OK) {
-    ESP_LOGI(TAG_CORE, "Iridium Modem [Ring Enabled]");
+    satcom->uart_number = UART_NUM_1;
+    satcom->uart_txn_number = GPIO_NUM_17;
+    satcom->uart_rxd_number = GPIO_NUM_18;
+    satcom->uart_rts_number = UART_PIN_NO_CHANGE;
+    satcom->uart_cts_number = UART_PIN_NO_CHANGE;
+    satcom->gpio_sleep_pin_number = GPIO_NUM_N;  // or -1 if unused
+    satcom->gpio_net_pin_number = GPIO_NUM_N;    // or -1 if unused
+
+    if (iridium_config(satcom) != SAT_OK) {
+        ESP_LOGE(TAG, "Modem init failed");
+        return;
+    }
+
+    iridium_config_ring(satcom, true);
+
+    iridium_result_t tx = iridium_tx_message(satcom, "hello");
+    if (tx.status == SAT_OK) {
+        ESP_LOGI(TAG, "Message sent");
+    }
 }
 ```
 
-# Contributing
+---
+
+## Configuration
+
+`iridium_default_configuration()` returns a heap-allocated `iridium_t` with sensible defaults. Set fields before calling `iridium_config()`:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `baud_rate` | `19200` | UART baud rate |
+| `response_timeout_ms` | `30000` | Max wait for modem response |
+| `buffer_size` | `10` | Outbound command queue depth |
+| `message_queue_size` | `20` | Inbound message queue depth |
+| `buffer_delay_ms` | `1000` | Buffer/message task poll interval |
+| `task_uart_stack_depth` | `4096` | UART task stack (bytes) |
+| `task_buffer_stack_depth` | `2048` | Buffer task stack |
+| `task_message_stack_depth` | `4096` | Message task stack |
+| `task_ring_stack_depth` | `4096` | Ring-indicator task stack |
+| `gpio_sleep_pin_number` | `-1` | SLP pin (disabled) |
+| `gpio_net_pin_number` | `-1` | NET pin (disabled) |
+
+Callbacks are optional but recommended for command completion and inbound messages.
+
+---
+
+## API reference
+
+### Lifecycle
+
+```c
+iridium_t *iridium_default_configuration(void);
+iridium_status_t iridium_config(iridium_t *satcom);
+iridium_status_t iridium_deinit(iridium_t *satcom);
+```
+
+`iridium_config()` installs UART, starts background tasks, and probes the modem with `AT`. `iridium_deinit()` stops tasks, uninstalls UART, and tears down queues.
+
+### Messaging
+
+```c
+iridium_result_t iridium_tx_message(iridium_t *satcom, const char *message);
+iridium_result_t iridium_rx_message(iridium_t *satcom, char *out, size_t out_len, size_t *received_len);
+```
+
+`iridium_tx_message()` writes the MO buffer (`AT+SBDWT`) then runs `AT+SBDIX` with adaptive retry. Messages must be ≤ `IRI_SBD_MAX_BYTES` (340).
+
+`iridium_rx_message()` polls mailbox status (`AT+SBDSX`) and reads the MT buffer (`AT+SBDRT`) when data is waiting.
+
+### Commands
+
+```c
+iridium_result_t iridium_send(iridium_t *satcom, iridium_command_t command, char *rdata,
+                              bool wait_response, int wait_interval);
+iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled);
+iridium_status_t iridium_system_spec(iridium_t *satcom);
+```
+
+`iridium_send()` dispatches an AT command. When `wait_response` is true, it blocks until the modem replies or `response_timeout_ms` is reached.
+
+Supported commands include `AT`, `AT+CSQ`, `AT+CGMI`, `AT+CGMM`, `AT+SBDSX`, `AT+SBDIX`, `AT+SBDIXA`, `AT+SBDWT`, `AT+SBDRT`, `AT+SBDMTA`, and configuration helpers (`AT&w0`, `AT&K0`).
+
+### Power and availability
+
+```c
+iridium_status_t iridium_modem_sleep(iridium_t *satcom);
+iridium_status_t iridium_modem_wake(iridium_t *satcom);
+int iridium_is_available(iridium_t *satcom);
+```
+
+`iridium_is_available()` reads the NET GPIO pin. Returns `1` when the network is available, `0` when not, or `-1` if the pin is not configured.
+
+### Status fields
+
+After `AT+SBDIX` / `AT+SBDSX`, these fields on `iridium_t` are populated:
+
+| Field | Description |
+|-------|-------------|
+| `status_outbound` | MO status (see `iridium_mo_status_t`) |
+| `sequence_outbound` | MO message sequence number |
+| `status_inbound` | MT status (see `iridium_mt_status_t`) |
+| `sequence_inbound` | MT message sequence number |
+| `bytes_received` | MT message length |
+| `messages_waiting` | MT messages queued at gateway |
+
+MO success codes: `0`, `1`, `2`. Common failure: `32` (no network service).
+
+### Callbacks
+
+```c
+typedef void (*iridium_event_callback_t)(iridium_t *satcom, iridium_command_t command,
+                                         iridium_status_t status);
+typedef void (*iridium_message_callback_t)(iridium_t *satcom, const char *data, size_t size);
+```
+
+`callback` fires when a command completes (e.g. `AT_CSQ`, `AT_SBDIX`). `message_callback` fires for inbound SBD payloads delivered via `AT+SBDRT` or the ring task.
+
+---
+
+## Serial simulation
+
+Recorded modem transcripts can be replayed for testing without a satellite link. Fixtures live in `test/host/fixtures/`:
+
+```text
+AT+SBDWT=hello       # device TX (lines starting with AT)
+OK                   # modem RX
+AT+SBDIX
++SBDIX: 0,42,1,17,25,0
+OK
+```
+
+See [test/host/README.md](test/host/README.md) for fixture format, replay CLI, and Python PTY simulator setup.
+
+---
+
+## Contributing
 
 When contributing to this repository, please first discuss the change you wish to make via issue,
-email, or any other method with the owners of this repository before making a change. 
+email, or any other method with the owners of this repository before making a change.
 
 Please note we have a code of conduct, please follow it in all your interactions with the project.
 
-## Pull Request Process
+### Pull request process
 
-1. Ensure any install or build dependencies are removed before the end of the layer when doing a 
-   build.
-2. Update the README.md with details of changes to the interface, this includes new environment 
-   variables, exposed ports, useful file locations and container parameters.
-3. You may merge the Pull Request in once you have the sign-off of two other developers, or if you 
-   do not have permission to do that, you may request the second reviewer to merge it for you.
+1. Ensure any install or build dependencies are removed before the end of the layer when doing a build.
+2. Update the README.md with details of changes to the interface, this includes new environment variables, exposed ports, useful file locations and container parameters.
+3. Run `make test` and confirm all host tests pass.
+4. You may merge the Pull Request once you have the sign-off of two other developers, or if you do not have permission to do that, you may request the second reviewer to merge it for you.
 
 ## Code of Conduct
 
