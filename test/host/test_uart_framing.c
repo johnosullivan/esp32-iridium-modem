@@ -42,6 +42,36 @@ TEST(test_finalize_ok_sbdrt_payload)
     ASSERT_STR_EQ("Hello from space", data);
 }
 
+TEST(test_finalize_ok_sbdrt_with_header)
+{
+    /* Real modem order (newest first): payload, +SBDRT:, AT echo */
+    const char *stack[] = {"hi!", "+SBDRT:", "AT+SBDRT"};
+    char command[IRI_PARSER_AT_CMD_MAX] = {0};
+    char data[IRI_PARSER_RESPONSE_MAX] = {0};
+    char payload[IRI_PARSER_RESPONSE_MAX] = {0};
+
+    ASSERT_OK(iridium_uart_finalize_ok(stack, 3, command, sizeof(command),
+                                       data, sizeof(data)));
+    ASSERT_STR_EQ("AT+SBDRT", command);
+    ASSERT_STR_EQ("+SBDRT:hi!", data);
+    ASSERT_OK(iridium_parser_sbdrt_payload(data, payload, sizeof(payload)));
+    ASSERT_STR_EQ("hi!", payload);
+}
+
+TEST(test_sbdrt_payload_strips_header_and_whitespace)
+{
+    char payload[IRI_PARSER_RESPONSE_MAX] = {0};
+
+    ASSERT_OK(iridium_parser_sbdrt_payload("+SBDRT:  abc  ", payload, sizeof(payload)));
+    ASSERT_STR_EQ("abc", payload);
+
+    ASSERT_OK(iridium_parser_sbdrt_payload("SBDRT:\nxyz\n", payload, sizeof(payload)));
+    ASSERT_STR_EQ("xyz", payload);
+
+    ASSERT_OK(iridium_parser_sbdrt_payload("plain", payload, sizeof(payload)));
+    ASSERT_STR_EQ("plain", payload);
+}
+
 TEST(test_fixture_mt_ring_session)
 {
     /* fixtures/mt_ring_session.txt — SBDRING follow-up read */
@@ -61,5 +91,7 @@ void run_uart_framing_tests(void)
     RUN_TEST(test_finalize_ok_sbdix_response_only);
     RUN_TEST(test_finalize_ok_with_echoed_command);
     RUN_TEST(test_finalize_ok_sbdrt_payload);
+    RUN_TEST(test_finalize_ok_sbdrt_with_header);
+    RUN_TEST(test_sbdrt_payload_strips_header_and_whitespace);
     RUN_TEST(test_fixture_mt_ring_session);
 }

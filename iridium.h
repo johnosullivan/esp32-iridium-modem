@@ -41,8 +41,11 @@ extern "C" {
 #define IRI_GPIO_CONF_BUFF      (100)
 #define IRI_GPIO_SLP_ON         (1)
 #define IRI_GPIO_SLP_OFF        (0)
-#define IRI_DEFAULT_BAUD_RATE   (19200)
-#define IRI_DEFAULT_TIMEOUT_MS  (30000)
+#define IRI_DEFAULT_BAUD_RATE       (19200)
+#define IRI_DEFAULT_TIMEOUT_MS      (30000)
+#define IRI_DEFAULT_SEND_LOCK_MS    (2000)
+#define IRI_SBDRT_TIMEOUT_MS        (5000)
+#define IRI_SEND_LOCK_WAIT_FOREVER  (-1)
 
 typedef enum iridium_command {
     SBDRING         = -1,
@@ -61,10 +64,12 @@ typedef enum iridium_command {
     AT_SBDIXA       = 12,
     AT_K0           = 13,
     AT_SBDMTAQ      = 14,
+    AT_K3           = 15,
 } iridium_command_t;
 
 typedef enum iridium_status {
     SAT_ERROR       = -1,
+    SAT_BUSY        = 0,
     SAT_OK          = 1
 } iridium_status_t;
 
@@ -132,6 +137,7 @@ typedef struct iridium {
     int message_queue_size;
     int buffer_delay_ms;
     int response_timeout_ms;
+    int send_lock_timeout_ms;
     int baud_rate;
 
     int uart_number;
@@ -142,6 +148,7 @@ typedef struct iridium {
 
     int gpio_sleep_pin_number;
     int gpio_net_pin_number;
+    int gpio_ri_pin_number;
 
     int task_message_stack_depth;
     int task_buffer_stack_depth;
@@ -157,6 +164,7 @@ typedef struct iridium {
     pthread_mutex_t p_status_mutex;
     pthread_mutex_t p_nonce_mutex;
     pthread_mutex_t ring_mutex;
+    pthread_mutex_t send_mutex;
 
     volatile int ring_task_running;
     volatile bool configured;
@@ -166,6 +174,8 @@ typedef struct iridium {
     TaskHandle_t task_buffer_handle;
     TaskHandle_t task_message_handle;
     TaskHandle_t task_ring_handle;
+    TaskHandle_t task_ri_handle;
+    QueueHandle_t ri_gpio_queue;
 } iridium_t;
 
 typedef struct iridium_message {
@@ -196,6 +206,9 @@ iridium_status_t iridium_modem_sleep(iridium_t *satcom);
 iridium_status_t iridium_modem_wake(iridium_t *satcom);
 
 int iridium_is_available(iridium_t *satcom);
+int iridium_is_ringing(iridium_t *satcom);
+bool iridium_is_busy(const iridium_t *satcom);
+bool iridium_uart_flow_control_enabled(const iridium_t *satcom);
 
 iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command, char *data);
 iridium_status_t iridium_update_iqs(iridium_t *satcom, iridium_queue_status_t status);
