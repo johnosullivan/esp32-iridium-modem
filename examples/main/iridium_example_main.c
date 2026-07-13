@@ -44,6 +44,8 @@ static const char *TAG = "iridium_example";
 /* iridium_send() keeps large AT buffers on-stack; keep this roomy */
 #define DEMO_TASK_STACK             8192
 #define DEMO_TASK_PRIORITY          5
+#define MO_QUEUE_LEN                4
+#define MO_PAYLOAD_MAX              64
 
 #if CONFIG_EXAMPLE_STATUS_LED
 #define RMT_LED_STRIP_RESOLUTION_HZ CONFIG_RMT_LED_STRIP_RESOLUTION_HZ
@@ -60,6 +62,11 @@ static const rmt_transmit_config_t led_tx_config = {
 
 static iridium_t *satcom;
 static uint32_t tx_count;
+static QueueHandle_t mo_queue;
+
+typedef struct {
+    char data[MO_PAYLOAD_MAX];
+} mo_job_t;
 
 static int uart_pin_or_nc(int pin)
 {
@@ -191,12 +198,26 @@ static void cb_satcom(iridium_t *modem, iridium_command_t command, iridium_statu
 static void cb_message(iridium_t *modem, const char *data, size_t size)
 {
     (void)modem;
-    ESP_LOGI(TAG, "Inbound MT (%u bytes): %.*s", (unsigned)size, (int)size, data);
+    ESP_LOGI(TAG, "========== INBOUND MESSAGE ==========");
+    ESP_LOGI(TAG, "Received %u byte(s):", (unsigned)size);
+    ESP_LOGI(TAG, "%.*s", (int)size, data);
+    ESP_LOGI(TAG, "=====================================");
+    printf("\n*** INBOUND MT (%u bytes): %.*s ***\n\n",
+           (unsigned)size, (int)size, data);
 }
 
 static void poll_signal_and_net(iridium_t *modem)
 {
+    if (iridium_is_busy(modem)) {
+        ESP_LOGI(TAG, "Skipping CSQ/NET poll — modem busy");
+        return;
+    }
+
     iridium_result_t csq = iridium_send(modem, AT_CSQ, "", true, 500);
+    if (csq.status == SAT_BUSY) {
+        ESP_LOGI(TAG, "CSQ deferred — modem busy");
+        return;
+    }
     if (csq.status != SAT_OK) {
         ESP_LOGW(TAG, "CSQ failed");
     }
@@ -218,10 +239,19 @@ static void poll_signal_and_net(iridium_t *modem)
 
 static void poll_mailbox(iridium_t *modem)
 {
+    if (iridium_is_busy(modem)) {
+        ESP_LOGI(TAG, "Skipping mailbox poll — modem busy");
+        return;
+    }
+
     char mt_buf[IRI_SBD_MAX_BYTES + 1];
     size_t received = 0;
 
     iridium_result_t rx = iridium_rx_message(modem, mt_buf, sizeof(mt_buf), &received);
+    if (rx.status == SAT_BUSY) {
+        ESP_LOGI(TAG, "Mailbox poll deferred — modem busy");
+        return;
+    }
     if (rx.status != SAT_OK) {
         ESP_LOGW(TAG, "Mailbox poll failed");
         return;
@@ -232,21 +262,79 @@ static void poll_mailbox(iridium_t *modem)
         return;
     }
 
-    ESP_LOGI(TAG, "Mailbox read (%u bytes): %.*s",
-             (unsigned)received, (int)received, mt_buf);
+    ESP_LOGI(TAG, "Mailbox read (%u bytes):", (unsigned)received);
+    ESP_LOGI(TAG, "%.*s", (int)received, mt_buf);
+    printf("\n*** MAILBOX MT (%u bytes): %.*s ***\n\n",
+           (unsigned)received, (int)received, mt_buf);
+}
+
+static bool enqueue_mo(const char *payload)
+{
+    if (mo_queue == NULL || payload == NULL) {
+        return false;
+    }
+
+    mo_job_t job = {0};
+    strncpy(job.data, payload, sizeof(job.data) - 1);
+
+    if (xQueueSend(mo_queue, &job, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "MO queue full — dropping: %s", payload);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "MO queued for later TX (%u waiting): %s",
+             (unsigned)uxQueueMessagesWaiting(mo_queue), payload);
+    return true;
+}
+
+static void drain_mo_queue(iridium_t *modem)
+{
+    if (mo_queue == NULL || iridium_is_busy(modem)) {
+        return;
+    }
+
+    mo_job_t job;
+    while (xQueueReceive(mo_queue, &job, 0) == pdTRUE) {
+        ESP_LOGI(TAG, "Draining queued MO: %s", job.data);
+        iridium_result_t tx = iridium_tx_message(modem, job.data);
+        if (tx.status == SAT_BUSY) {
+            xQueueSendToFront(mo_queue, &job, 0);
+            ESP_LOGI(TAG, "Modem became busy — leaving MO queued");
+            return;
+        }
+        if (tx.status == SAT_OK) {
+            ESP_LOGI(TAG, "Queued MO transfer succeeded");
+        } else {
+            ESP_LOGW(TAG, "Queued MO failed (MO status %d: %s)",
+                     modem->status_outbound, mo_status_str(modem->status_outbound));
+        }
+
+        if (iridium_is_busy(modem)) {
+            return;
+        }
+    }
 }
 
 static void send_demo_message(iridium_t *modem)
 {
-    char payload[64];
+    char payload[MO_PAYLOAD_MAX];
     tx_count++;
     snprintf(payload, sizeof(payload), "esp32-iridium demo #%lu",
              (unsigned long)tx_count);
+
+    if (iridium_is_busy(modem)) {
+        ESP_LOGI(TAG, "Modem busy — queueing MO: %s", payload);
+        enqueue_mo(payload);
+        return;
+    }
 
     ESP_LOGI(TAG, "Sending MO: %s", payload);
     iridium_result_t tx = iridium_tx_message(modem, payload);
     if (tx.status == SAT_OK) {
         ESP_LOGI(TAG, "MO transfer succeeded");
+    } else if (tx.status == SAT_BUSY) {
+        ESP_LOGI(TAG, "MO deferred — queueing: %s", payload);
+        enqueue_mo(payload);
     } else {
         ESP_LOGW(TAG, "MO transfer failed (MO status %d: %s)",
                  modem->status_outbound, mo_status_str(modem->status_outbound));
@@ -322,6 +410,8 @@ static void demo_task(void *pvParameters)
         const bool pressed = gpio_get_level(BUTTON_GPIO) == 1;
         const TickType_t now = xTaskGetTickCount();
 
+        drain_mo_queue(modem);
+
         if (pressed && !button_down) {
             button_down = true;
             button_down_at = now;
@@ -388,6 +478,12 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
+    mo_queue = xQueueCreate(MO_QUEUE_LEN, sizeof(mo_job_t));
+    if (mo_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create MO queue");
+        return;
+    }
 
 #if CONFIG_EXAMPLE_STATUS_LED
     configure_led();

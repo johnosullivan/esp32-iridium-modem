@@ -45,7 +45,7 @@ Options:
 Host tests run without hardware or ESP-IDF:
 
 ```bash
-make test          # 19 unit tests (parser, framing, serial replay)
+make test          # 21 unit tests (parser, framing, serial replay)
 make replay        # replay mo_send_success fixture, print parsed state
 make sim-dry-run   # preview Python modem traffic without a serial port
 ```
@@ -239,13 +239,14 @@ void app_main(void)
 |-------|---------|-------------|
 | `baud_rate` | `19200` | UART baud rate |
 | `response_timeout_ms` | `30000` | Max wait for modem response |
+| `send_lock_timeout_ms` | `2000` | Max wait to acquire modem lock (`-1` = forever) |
 | `buffer_size` | `10` | Outbound command queue depth |
 | `message_queue_size` | `20` | Inbound message queue depth |
 | `buffer_delay_ms` | `1000` | Buffer/message task poll interval |
-| `task_uart_stack_depth` | `4096` | UART task stack (bytes) |
+| `task_uart_stack_depth` | `8192` | UART task stack (bytes) |
 | `task_buffer_stack_depth` | `2048` | Buffer task stack |
 | `task_message_stack_depth` | `4096` | Message task stack |
-| `task_ring_stack_depth` | `4096` | Ring-indicator task stack |
+| `task_ring_stack_depth` | `8192` | Ring-indicator task stack |
 | `gpio_sleep_pin_number` | `-1` | SLP pin (disabled) |
 | `gpio_net_pin_number` | `-1` | NET pin (disabled) |
 | `gpio_ri_pin_number` | `-1` | RI pin (disabled) |
@@ -286,7 +287,7 @@ iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled);
 iridium_status_t iridium_system_spec(iridium_t *satcom);
 ```
 
-`iridium_send()` dispatches an AT command. When `wait_response` is true, it blocks until the modem replies or `response_timeout_ms` is reached.
+`iridium_send()` dispatches an AT command. When `wait_response` is true, it blocks until the modem replies or `response_timeout_ms` is reached. If another caller already owns the modem, it returns `SAT_BUSY` after `send_lock_timeout_ms` (default 2000) instead of waiting forever.
 
 Supported commands include `AT`, `AT+CSQ`, `AT+CGMI`, `AT+CGMM`, `AT+SBDSX`, `AT+SBDIX`, `AT+SBDIXA`, `AT+SBDWT`, `AT+SBDRT`, `AT+SBDMTA`, and configuration helpers (`AT&w0`, `AT&K0`, `AT&K3`).
 
@@ -297,12 +298,15 @@ iridium_status_t iridium_modem_sleep(iridium_t *satcom);
 iridium_status_t iridium_modem_wake(iridium_t *satcom);
 int iridium_is_available(iridium_t *satcom);
 int iridium_is_ringing(iridium_t *satcom);
+bool iridium_is_busy(const iridium_t *satcom);
 bool iridium_uart_flow_control_enabled(const iridium_t *satcom);
 ```
 
 `iridium_is_available()` reads the NET GPIO pin. Returns `1` when the network is available, `0` when not, or `-1` if the pin is not configured.
 
 `iridium_is_ringing()` reads the RI GPIO pin. Returns `1` when RI is asserted (active low), `0` when idle, or `-1` if the pin is not configured.
+
+`iridium_is_busy()` is true while a ring session is active or a command is waiting for a modem response. Apps should treat `SAT_BUSY` from `iridium_tx_message()` / `iridium_send()` as “retry later” (the example queues MO payloads).
 
 ### Status fields
 

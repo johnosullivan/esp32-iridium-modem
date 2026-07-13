@@ -98,8 +98,9 @@ bool iridium_uart_finalize_ok(const char **stack_top_first, size_t line_count,
         return line_count == 0;
     }
 
-    for (size_t i = 0; i < line_count; i++) {
-        const char *line = stack_top_first[i];
+    /* stack_top_first is newest-first; walk oldest-first for stable multi-line data. */
+    for (size_t n = line_count; n > 0; n--) {
+        const char *line = stack_top_first[n - 1];
         if (line == NULL) {
             continue;
         }
@@ -114,5 +115,44 @@ bool iridium_uart_finalize_ok(const char **stack_top_first, size_t line_count,
         }
     }
 
+    return true;
+}
+
+bool iridium_parser_sbdrt_payload(const char *response, char *out, size_t out_len)
+{
+    if (out == NULL || out_len == 0) {
+        return false;
+    }
+
+    out[0] = '\0';
+    if (response == NULL) {
+        return true;
+    }
+
+    const char *payload = response;
+    if (iridium_parser_starts_with("+SBDRT:", payload)) {
+        payload += strlen("+SBDRT:");
+    } else if (iridium_parser_starts_with("SBDRT:", payload)) {
+        payload += strlen("SBDRT:");
+    }
+
+    while (*payload == ' ' || *payload == '\t' || *payload == '\r' || *payload == '\n') {
+        payload++;
+    }
+
+    size_t len = strlen(payload);
+    while (len > 0 && (payload[len - 1] == ' ' || payload[len - 1] == '\t' ||
+                       payload[len - 1] == '\r' || payload[len - 1] == '\n')) {
+        len--;
+    }
+
+    if (len >= out_len) {
+        memcpy(out, payload, out_len - 1);
+        out[out_len - 1] = '\0';
+        return false;
+    }
+
+    memcpy(out, payload, len);
+    out[len] = '\0';
     return true;
 }

@@ -41,11 +41,18 @@ bool iridium_parser_mo_transfer_ok(int mo_status);
 
 /**
  * Apply the UART task's OK-handler logic to a stack snapshot.
- * @param stack_top_first Lines in pop order (top of stack first).
+ * @param stack_top_first Lines in pop order (top of stack / newest first).
+ *   Data lines are concatenated oldest-first for multi-line responses.
  */
 bool iridium_uart_finalize_ok(const char **stack_top_first, size_t line_count,
                               char *command, size_t command_len,
                               char *data, size_t data_len);
+
+/**
+ * Extract the MT text payload from an AT+SBDRT response body.
+ * Strips a leading "+SBDRT:" header and surrounding whitespace.
+ */
+bool iridium_parser_sbdrt_payload(const char *response, char *out, size_t out_len);
 
 #ifdef __cplusplus
 }
