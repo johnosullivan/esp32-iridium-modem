@@ -74,14 +74,99 @@ CI runs `make test` on every push and pull request via `.github/workflows/test.y
 | CTS | Clear to send |
 | RTS | Ready to send |
 | NET | Network available |
-| RI | Ring indicator |
+| RI | Ring indicator (active low) |
 | TXD | Serial input to modem |
 | SLP | Sleep control |
 | 5V | 5 V power supply |
 | BAT | 3.7 V power supply |
 | GND | Ground |
 
-RTS/CTS flow control is enabled automatically when both pins are configured (not `UART_PIN_NO_CHANGE`).
+RTS/CTS flow control is enabled automatically when both pins are configured (not `UART_PIN_NO_CHANGE`). `iridium_config_ring()` saves `AT&K3` when RTS/CTS are wired, otherwise `AT&K0`.
+
+The RI pin can be wired to a GPIO (`gpio_ri_pin_number`). A falling edge (active low) starts the same ring handler as the unsolicited `SBDRING` UART alert. Use `iridium_is_ringing()` to read the current RI level.
+
+RockBLOCK pin wiring (ESP32 host):
+
+| RockBLOCK pin | Connect to | Example Kconfig |
+|---------------|------------|-----------------|
+| TXD (modem RX) | ESP32 UART TX | `UART_TX_GPIO_NUM` (e.g. 17) |
+| RXD (modem TX) | ESP32 UART RX | `UART_RX_GPIO_NUM` (e.g. 18) |
+| RTS | ESP32 UART RTS | `UART_RTS_GPIO_NUM` (e.g. 16) |
+| CTS | ESP32 UART CTS | `UART_CTS_GPIO_NUM` (e.g. 15) |
+| NET | ESP32 GPIO input | `UART_NET_GPIO_NUM` |
+| RI | ESP32 GPIO input (pull-up; active low) | `UART_RI_GPIO_NUM` (e.g. 7) |
+| SLP | ESP32 GPIO output | `UART_SLEEP_GPIO_NUM` |
+| GND | ESP32 GND | — |
+| 5V or BAT | 5 V or 3.7 V supply (≥450 mA) | — |
+
+Set pins in `idf.py menuconfig` → **Iridium Configuration**. Use `-1` for optional pins you leave unwired.
+
+### Wiring diagram
+
+RockBLOCK signal names are from the [Adafruit hardware guide](https://learn.adafruit.com/using-the-rockblock-iridium-modem/hardware). **Cross UART data lines**: ESP TX → modem TXD, ESP RX → modem RXD.
+
+```text
+                    ESP32-S3 (example)              RockBLOCK 9603
+                    ----------------              ---------------
+  UART data  ----->  GPIO 17  (TX)  ------------>  TXD  (pin 6, modem RX)
+  UART data  <-----  GPIO 18  (RX)  <------------  RXD  (pin 1, modem TX)
+  flow ctrl  ----->  GPIO 16  (RTS) ------------>  RTS  (pin 3)
+  flow ctrl  <-----  GPIO 15  (CTS) <------------  CTS  (pin 2)
+  status     <-----  GPIO ??  (NET) <------------  NET  (pin 4)
+  ring       <-----  GPIO  7  (RI)  <------------  RI   (pin 5, active low)
+  sleep      ----->  GPIO ??  (SLP) ------------>  SLP  (pin 7)
+  power      <-----  3.3 V / 5 V (≥450 mA) ----->  5V or BAT
+  ground     <-----  GND ----------------------->  GND
+
+  Optional: GPIO 4 (active-high) demo button — short press sends SBD test message
+  Optional: GPIO 48 WS2812 status LED — color mapped to AT+CSQ signal strength
+```
+
+```mermaid
+flowchart LR
+    subgraph ESP32["ESP32 host"]
+        TX["GPIO 17 UART TX"]
+        RX["GPIO 18 UART RX"]
+        RTS["GPIO 16 UART RTS"]
+        CTS["GPIO 15 UART CTS"]
+        NET["GPIO NET in"]
+        RI["GPIO 7 RI in"]
+        SLP["GPIO SLP out"]
+        GND_E["GND"]
+    end
+
+    subgraph RB["RockBLOCK 9603"]
+        TXD["TXD pin 6"]
+        RXD["RXD pin 1"]
+        RTS_R["RTS pin 3"]
+        CTS_R["CTS pin 2"]
+        NET_R["NET pin 4"]
+        RI_R["RI pin 5"]
+        SLP_R["SLP pin 7"]
+        GND_R["GND"]
+        PWR["5V / BAT"]
+    end
+
+    TX --> TXD
+    RXD --> RX
+    RTS --> RTS_R
+    CTS_R --> CTS
+    NET_R --> NET
+    RI_R --> RI
+    SLP --> SLP_R
+    GND_E --- GND_R
+    PWR -.-> ESP32
+```
+
+**UART minimum** (works without flow control): TX, RX, GND, power.
+
+**Recommended** for reliable sessions: add RTS + CTS (driver sends `AT&K3` automatically).
+
+**Inbound alerts**: wire RI *or* rely on UART `SBDRING` (both trigger the same ring handler). RI is active low — leave the ESP32 input pulled up.
+
+**SLP caution**: on RockBLOCK v3.F+, the sleep pin may need level shifting if the ESP32 is 3.3 V only. See [RockBLOCK sleep / on-off control](https://docs.rockblock.rock7.com/docs/power-supply#onoff-control).
+
+See the [Adafruit RockBLOCK hardware guide](https://learn.adafruit.com/using-the-rockblock-iridium-modem/hardware) for connector and power details.
 
 ---
 
@@ -128,6 +213,7 @@ void app_main(void)
     satcom->uart_cts_number = UART_PIN_NO_CHANGE;
     satcom->gpio_sleep_pin_number = GPIO_NUM_N;  // or -1 if unused
     satcom->gpio_net_pin_number = GPIO_NUM_N;    // or -1 if unused
+    satcom->gpio_ri_pin_number = GPIO_NUM_N;     // or -1 if unused
 
     if (iridium_config(satcom) != SAT_OK) {
         ESP_LOGE(TAG, "Modem init failed");
@@ -162,6 +248,7 @@ void app_main(void)
 | `task_ring_stack_depth` | `4096` | Ring-indicator task stack |
 | `gpio_sleep_pin_number` | `-1` | SLP pin (disabled) |
 | `gpio_net_pin_number` | `-1` | NET pin (disabled) |
+| `gpio_ri_pin_number` | `-1` | RI pin (disabled) |
 
 Callbacks are optional but recommended for command completion and inbound messages.
 
@@ -201,17 +288,21 @@ iridium_status_t iridium_system_spec(iridium_t *satcom);
 
 `iridium_send()` dispatches an AT command. When `wait_response` is true, it blocks until the modem replies or `response_timeout_ms` is reached.
 
-Supported commands include `AT`, `AT+CSQ`, `AT+CGMI`, `AT+CGMM`, `AT+SBDSX`, `AT+SBDIX`, `AT+SBDIXA`, `AT+SBDWT`, `AT+SBDRT`, `AT+SBDMTA`, and configuration helpers (`AT&w0`, `AT&K0`).
+Supported commands include `AT`, `AT+CSQ`, `AT+CGMI`, `AT+CGMM`, `AT+SBDSX`, `AT+SBDIX`, `AT+SBDIXA`, `AT+SBDWT`, `AT+SBDRT`, `AT+SBDMTA`, and configuration helpers (`AT&w0`, `AT&K0`, `AT&K3`).
 
-### Power and availability
+### Power, availability, and ring GPIO
 
 ```c
 iridium_status_t iridium_modem_sleep(iridium_t *satcom);
 iridium_status_t iridium_modem_wake(iridium_t *satcom);
 int iridium_is_available(iridium_t *satcom);
+int iridium_is_ringing(iridium_t *satcom);
+bool iridium_uart_flow_control_enabled(const iridium_t *satcom);
 ```
 
 `iridium_is_available()` reads the NET GPIO pin. Returns `1` when the network is available, `0` when not, or `-1` if the pin is not configured.
+
+`iridium_is_ringing()` reads the RI GPIO pin. Returns `1` when RI is asserted (active low), `0` when idle, or `-1` if the pin is not configured.
 
 ### Status fields
 

@@ -1,59 +1,122 @@
 menu "Iridium Configuration"
 
-    config RMT_LED_STRIP_RESOLUTION_HZ
-        int "RMT LED_STRIP RESOLUTION HZ"
-        range 0 100000000
-        default 10000000
-        help
-            RMT LED_STRIP RESOLUTION HZ: 0-100000000
-
-    config RMT_LED_STRIP_GPIO_NUM
-        int "RMT LED_STRIP GPIO_NUM"
-        range 0 255
-        default 0
-        help
-            RMT LED_STRIP GPIO_NUM: 0-255
-
-    config RMT_LED_STRIP_COUNT
-        int "RMT LED_STRIP COUNT"
-        range 0 255
+    config UART_NUMBER
+        int "UART port number"
+        range 0 2
         default 1
         help
-            RMT LED_STRIP COUNT: 0-255
+            UART port connected to the RockBLOCK modem.
 
-    config UART_NUMBER
-        int "UART_NUMBER"
-        range 0 255
-        default 0
-        help
-            UART_NUMBER: 0-255
-    
     config UART_TX_GPIO_NUM
-        int "UART_TX_GPIO_NUM"
-        range 0 255
-        default 0
+        int "UART TX GPIO"
+        range 0 48
+        default 17
         help
-            UART_TX_GPIO_NUM: 0-255
+            ESP32 TX pin wired to modem RXD.
 
     config UART_RX_GPIO_NUM
-        int "UART_RX_GPIO_NUM"
-        range 0 255
-        default 0
+        int "UART RX GPIO"
+        range 0 48
+        default 18
         help
-            UART_RX_GPIO_NUM: 0-255
+            ESP32 RX pin wired to modem TXD.
+
+    config UART_RTS_GPIO_NUM
+        int "UART RTS GPIO (-1 to disable)"
+        range -1 48
+        default -1
+        help
+            ESP32 RTS output wired to RockBLOCK RTS (pin 3). Set both RTS and
+            CTS to enable hardware flow control (AT&K3).
+
+    config UART_CTS_GPIO_NUM
+        int "UART CTS GPIO (-1 to disable)"
+        range -1 48
+        default -1
+        help
+            RockBLOCK CTS (pin 2) wired to ESP32 CTS input. Set both RTS and
+            CTS to enable hardware flow control (AT&K3).
 
     config UART_SLEEP_GPIO_NUM
-        int "UART_SLEEP_GPIO_NUM"
-        range 0 255
-        default 0
+        int "Modem sleep (SLP) GPIO (-1 to disable)"
+        range -1 48
+        default -1
         help
-            UART_SLEEP_GPIO_NUM: 0-255
-    
+            RockBLOCK SLP pin. Set to -1 if unused.
+
     config UART_NET_GPIO_NUM
-        int "UART_NET_GPIO_NUM"
-        range 0 255
-        default 0
+        int "Modem network (NET) GPIO (-1 to disable)"
+        range -1 48
+        default -1
         help
-            UART_NET_GPIO_NUM: 0-255
+            RockBLOCK NET availability pin. Set to -1 if unused.
+
+    config UART_RI_GPIO_NUM
+        int "Modem ring indicator (RI) GPIO (-1 to disable)"
+        range -1 48
+        default -1
+        help
+            RockBLOCK RI pin (active low). When configured, a falling edge
+            starts the same ring handler as the SBDRING UART alert.
+
+    config EXAMPLE_BUTTON_GPIO_NUM
+        int "Demo button GPIO"
+        range 0 48
+        default 4
+        help
+            Press to send an SBD message. Long-press toggles sleep when
+            EXAMPLE_ENABLE_SLEEP_DEMO is enabled.
+
+    config EXAMPLE_CSQ_INTERVAL_MS
+        int "Signal poll interval (ms)"
+        range 5000 600000
+        default 60000
+        help
+            How often to query AT+CSQ and log NET availability.
+
+    config EXAMPLE_MAILBOX_POLL_INTERVAL_MS
+        int "Mailbox poll interval (ms)"
+        range 30000 3600000
+        default 300000
+        help
+            How often to poll for MT messages with iridium_rx_message().
+            Ring-delivered messages still arrive via message_callback.
+
+    config EXAMPLE_ENABLE_SLEEP_DEMO
+        bool "Enable long-press sleep/wake demo"
+        default n
+        help
+            Hold the demo button for ~2 seconds to call iridium_modem_sleep()
+            / iridium_modem_wake(). Requires UART_SLEEP_GPIO_NUM configured.
+
+    config EXAMPLE_STATUS_LED
+        bool "Drive status RGB LED from signal strength"
+        default y
+        help
+            Map AT+CSQ (0-5) onto a WS2812-style LED via RMT.
+
+    config RMT_LED_STRIP_RESOLUTION_HZ
+        int "RMT LED strip resolution (Hz)"
+        depends on EXAMPLE_STATUS_LED
+        range 1000000 100000000
+        default 10000000
+        help
+            RMT tick rate for the LED strip encoder.
+
+    config RMT_LED_STRIP_GPIO_NUM
+        int "RMT LED strip GPIO"
+        depends on EXAMPLE_STATUS_LED
+        range 0 48
+        default 48
+        help
+            Data pin for the addressable status LED.
+
+    config RMT_LED_STRIP_COUNT
+        int "RMT LED strip LED count"
+        depends on EXAMPLE_STATUS_LED
+        range 1 16
+        default 1
+        help
+            Number of LEDs in the strip (usually 1).
 
 endmenu

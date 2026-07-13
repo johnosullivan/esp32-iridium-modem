@@ -63,3 +63,7 @@ managed_components
 # IDEs
 .idea
 .DS_Store
+
+# clangd / language-server indexes
+*.idx
+.cache/

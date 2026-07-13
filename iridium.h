@@ -61,6 +61,7 @@ typedef enum iridium_command {
     AT_SBDIXA       = 12,
     AT_K0           = 13,
     AT_SBDMTAQ      = 14,
+    AT_K3           = 15,
 } iridium_command_t;
 
 typedef enum iridium_status {
@@ -142,6 +143,7 @@ typedef struct iridium {
 
     int gpio_sleep_pin_number;
     int gpio_net_pin_number;
+    int gpio_ri_pin_number;
 
     int task_message_stack_depth;
     int task_buffer_stack_depth;
@@ -166,6 +168,8 @@ typedef struct iridium {
     TaskHandle_t task_buffer_handle;
     TaskHandle_t task_message_handle;
     TaskHandle_t task_ring_handle;
+    TaskHandle_t task_ri_handle;
+    QueueHandle_t ri_gpio_queue;
 } iridium_t;
 
 typedef struct iridium_message {
@@ -196,6 +200,8 @@ iridium_status_t iridium_modem_sleep(iridium_t *satcom);
 iridium_status_t iridium_modem_wake(iridium_t *satcom);
 
 int iridium_is_available(iridium_t *satcom);
+int iridium_is_ringing(iridium_t *satcom);
+bool iridium_uart_flow_control_enabled(const iridium_t *satcom);
 
 iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command, char *data);
 iridium_status_t iridium_update_iqs(iridium_t *satcom, iridium_queue_status_t status);

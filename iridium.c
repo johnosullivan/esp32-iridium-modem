@@ -5,6 +5,7 @@
 #include <pthread.h>
 
 #include "esp_log.h"
+#include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/uart.h"
@@ -105,6 +106,28 @@ static iridium_result_t iridium_make_ok(const char *payload)
 }
 
 static void iridium_try_start_ring_task(iridium_t *satcom);
+static void ri_gpio_task(void *pvParameters);
+
+bool iridium_uart_flow_control_enabled(const iridium_t *satcom)
+{
+    return satcom != NULL &&
+           satcom->uart_rts_number != UART_PIN_NO_CHANGE &&
+           satcom->uart_cts_number != UART_PIN_NO_CHANGE;
+}
+
+static void IRAM_ATTR iridium_ri_gpio_isr(void *arg)
+{
+    iridium_t *satcom = (iridium_t *)arg;
+    BaseType_t hp = pdFALSE;
+    uint8_t evt = 1;
+
+    if (satcom != NULL && satcom->ri_gpio_queue != NULL) {
+        xQueueSendFromISR(satcom->ri_gpio_queue, &evt, &hp);
+        if (hp) {
+            portYIELD_FROM_ISR();
+        }
+    }
+}
 
 iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command, char *data)
 {
@@ -114,6 +137,7 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
 
     if (strcmp("AT", command) == 0 ||
         strcmp("AT&K0", command) == 0 ||
+        strcmp("AT&K3", command) == 0 ||
         strcmp("AT&w0", command) == 0 ||
         iridium_parser_starts_with("AT+SBDMTA", command)) {
         return SAT_OK;
@@ -255,7 +279,9 @@ iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled)
     }
     vTaskDelay(pdMS_TO_TICKS(IRI_BUFF_DELAY));
 
-    result = iridium_send(satcom, AT_K0, "", true, 500);
+    result = iridium_send(satcom,
+                          iridium_uart_flow_control_enabled(satcom) ? AT_K3 : AT_K0,
+                          "", true, 500);
     if (result.status != SAT_OK) {
         return result;
     }
@@ -409,6 +435,9 @@ iridium_result_t iridium_send(iridium_t *satcom, iridium_command_t command, char
         case AT_K0:
             result.status = iridium_send_raw(satcom, "AT&K0\r", t_nonce);
             break;
+        case AT_K3:
+            result.status = iridium_send_raw(satcom, "AT&K3\r", t_nonce);
+            break;
         default:
             ESP_LOGW(TAG_IRIDIUM, "Unsupported command %d", command);
             return iridium_make_error();
@@ -457,6 +486,28 @@ static void iridium_try_start_ring_task(iridium_t *satcom)
         }
     }
     pthread_mutex_unlock(&satcom->ring_mutex);
+}
+
+void ri_gpio_task(void *pvParameters)
+{
+    iridium_t *satcom = (iridium_t *)pvParameters;
+    uint8_t evt;
+
+    for (;;) {
+        if (satcom->ri_gpio_queue == NULL ||
+            !xQueueReceive(satcom->ri_gpio_queue, &evt, portMAX_DELAY)) {
+            continue;
+        }
+
+        if (satcom->shutdown_requested) {
+            break;
+        }
+
+        ESP_LOGI(TAG_IRIDIUM, "RI pin asserted");
+        iridium_try_start_ring_task(satcom);
+    }
+
+    vTaskDelete(NULL);
 }
 
 void ring_satcom_task(void *pvParameters)
@@ -650,6 +701,7 @@ iridium_t *iridium_default_configuration(void)
     satcom->task_ring_stack_depth = 4096;
     satcom->gpio_sleep_pin_number = -1;
     satcom->gpio_net_pin_number = -1;
+    satcom->gpio_ri_pin_number = -1;
     satcom->uart_rts_number = UART_PIN_NO_CHANGE;
     satcom->uart_cts_number = UART_PIN_NO_CHANGE;
     return satcom;
@@ -661,6 +713,16 @@ int iridium_is_available(iridium_t *satcom)
         return -1;
     }
     return gpio_get_level(satcom->gpio_net_pin_number);
+}
+
+int iridium_is_ringing(iridium_t *satcom)
+{
+    if (satcom == NULL || satcom->gpio_ri_pin_number == -1) {
+        return -1;
+    }
+
+    /* RockBLOCK RI is active low. */
+    return gpio_get_level(satcom->gpio_ri_pin_number) == 0 ? 1 : 0;
 }
 
 iridium_status_t iridium_system_spec(iridium_t *satcom)
@@ -721,6 +783,7 @@ static void iridium_destroy_resources(iridium_t *satcom)
     satcom->shutdown_requested = true;
 
     iridium_stop_task(&satcom->task_ring_handle);
+    iridium_stop_task(&satcom->task_ri_handle);
     iridium_stop_task(&satcom->task_uart_handle);
     iridium_stop_task(&satcom->task_buffer_handle);
     iridium_stop_task(&satcom->task_message_handle);
@@ -737,6 +800,13 @@ static void iridium_destroy_resources(iridium_t *satcom)
     if (satcom->message_queue != NULL) {
         vQueueDelete(satcom->message_queue);
         satcom->message_queue = NULL;
+    }
+    if (satcom->ri_gpio_queue != NULL) {
+        vQueueDelete(satcom->ri_gpio_queue);
+        satcom->ri_gpio_queue = NULL;
+    }
+    if (satcom->gpio_ri_pin_number != -1) {
+        gpio_isr_handler_remove((gpio_num_t)satcom->gpio_ri_pin_number);
     }
     satcom->uart_queue = NULL;
 
@@ -793,6 +863,58 @@ static iridium_status_t iridium_configure_gpio(iridium_t *satcom)
         vTaskDelay(pdMS_TO_TICKS(IRI_GPIO_CONF_BUFF));
     }
 
+    if (satcom->gpio_ri_pin_number != -1) {
+        gpio_config_t ri_conf = {
+            .intr_type = GPIO_INTR_NEGEDGE,
+            .mode = GPIO_MODE_INPUT,
+            .pin_bit_mask = (1ULL << satcom->gpio_ri_pin_number),
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+        };
+
+        if (gpio_config(&ri_conf) != ESP_OK) {
+            return SAT_ERROR;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(IRI_GPIO_CONF_BUFF));
+    }
+
+    return SAT_OK;
+}
+
+static iridium_status_t iridium_start_ri_monitor(iridium_t *satcom)
+{
+    if (satcom == NULL || satcom->gpio_ri_pin_number == -1) {
+        return SAT_OK;
+    }
+
+    satcom->ri_gpio_queue = xQueueCreate(4, sizeof(uint8_t));
+    if (satcom->ri_gpio_queue == NULL) {
+        return SAT_ERROR;
+    }
+
+    esp_err_t isr_err = gpio_install_isr_service(0);
+    if (isr_err != ESP_OK && isr_err != ESP_ERR_INVALID_STATE) {
+        return SAT_ERROR;
+    }
+
+    if (gpio_isr_handler_add((gpio_num_t)satcom->gpio_ri_pin_number,
+                             iridium_ri_gpio_isr, satcom) != ESP_OK) {
+        return SAT_ERROR;
+    }
+
+    if (xTaskCreate(ri_gpio_task,
+                    "ri_gpio_task",
+                    2048,
+                    satcom,
+                    12,
+                    &satcom->task_ri_handle) != pdPASS) {
+        gpio_isr_handler_remove((gpio_num_t)satcom->gpio_ri_pin_number);
+        return SAT_ERROR;
+    }
+
+    ESP_LOGI(TAG_IRIDIUM, "RI GPIO monitor enabled on pin %d",
+             satcom->gpio_ri_pin_number);
     return SAT_OK;
 }
 
@@ -812,9 +934,9 @@ iridium_status_t iridium_config(iridium_t *satcom)
     }
 
     uart_hw_flowcontrol_t flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-    if (satcom->uart_rts_number != UART_PIN_NO_CHANGE &&
-        satcom->uart_cts_number != UART_PIN_NO_CHANGE) {
+    if (iridium_uart_flow_control_enabled(satcom)) {
         flow_ctrl = UART_HW_FLOWCTRL_CTS_RTS;
+        ESP_LOGI(TAG_IRIDIUM, "UART hardware flow control enabled (RTS/CTS)");
     }
 
     uart_config_t uart_config = {
@@ -902,6 +1024,11 @@ iridium_status_t iridium_config(iridium_t *satcom)
 
     satcom->configured = true;
     vTaskDelay(pdMS_TO_TICKS(1000));
+
+    if (iridium_start_ri_monitor(satcom) != SAT_OK) {
+        iridium_destroy_resources(satcom);
+        return SAT_ERROR;
+    }
 
     iridium_result_t probe = iridium_send(satcom, AT, NULL, true, 500);
     if (probe.status != SAT_OK) {
