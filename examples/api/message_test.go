@@ -32,6 +32,31 @@ func TestParseRockBlockMessageEmpty(t *testing.T) {
 	}
 }
 
+func TestRockBlockMessageValidateAndDecode(t *testing.T) {
+	t.Parallel()
+
+	msg, err := ParseRockBlockMessage([]byte(sampleWebhook))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := msg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	plain, err := msg.DecodedData()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if plain != "Hello" {
+		t.Fatalf("decoded: got %q", plain)
+	}
+
+	bad := msg
+	bad.Data = "zz"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("expected invalid hex data to fail validation")
+	}
+}
+
 func TestWebhookOutcomeValid(t *testing.T) {
 	t.Parallel()
 

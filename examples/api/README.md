@@ -10,9 +10,10 @@ cd examples/api
 go mod tidy
 go run .
 # POST form body to http://localhost:8080/
+# health: GET http://localhost:8080/healthz
 ```
 
-Override the listen port with `PORT=9090 go run .`.
+Override listen address with `ADDR=127.0.0.1:9090` or `PORT=9090`. Set `GIN_MODE=debug` for Gin’s debug logger.
 
 ## Productivity tooling
 
@@ -48,11 +49,11 @@ make bench        # writes bench.txt for benchstat
 
 | File | Role |
 |------|------|
-| `main.go` | HTTP server + webhook handler |
-| `message.go` | `RockBlockMessage` + `ParseRockBlockMessage` |
+| `main.go` | HTTP server (graceful shutdown, `/healthz`, structured logs) |
+| `message.go` | `RockBlockMessage` parse / validate / hex decode |
 | `outcome.go` | `go-enum` source for `WebhookOutcome` |
 | `outcome_enum.go` | Generated (`go generate`) — do not edit |
-| `message_test.go` | Unit tests + `BenchmarkParseRockBlockMessage` |
+| `message_test.go` / `main_test.go` | Unit tests + parse benchmark |
 | `.golangci.yml` | Linter set from the article |
 | `.air.toml` | Live-reload config |
 

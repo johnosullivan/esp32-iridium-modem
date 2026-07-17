@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/joncalhoun/qson"
 )
@@ -37,4 +39,33 @@ func ParseRockBlockMessage(raw []byte) (RockBlockMessage, error) {
 		return message, fmt.Errorf("json: %w", err)
 	}
 	return message, nil
+}
+
+// Validate checks that required RockBLOCK MO fields are present.
+func (m RockBlockMessage) Validate() error {
+	if m.Imei == 0 {
+		return fmt.Errorf("missing imei")
+	}
+	if m.Serial == 0 {
+		return fmt.Errorf("missing serial")
+	}
+	if strings.TrimSpace(m.TransmitTime) == "" {
+		return fmt.Errorf("missing transmit_time")
+	}
+	if strings.TrimSpace(m.Data) == "" {
+		return fmt.Errorf("missing data")
+	}
+	if _, err := hex.DecodeString(m.Data); err != nil {
+		return fmt.Errorf("data must be hex: %w", err)
+	}
+	return nil
+}
+
+// DecodedData returns the MO payload decoded from hex.
+func (m RockBlockMessage) DecodedData() (string, error) {
+	b, err := hex.DecodeString(m.Data)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
