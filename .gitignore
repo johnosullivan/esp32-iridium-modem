@@ -53,8 +53,9 @@ dkms.conf
 
 build/
 
-# VS Code
-.vscode
+# VS Code / Cursor — keep clangd settings for ESP-IDF IntelliSense
+.vscode/*
+!.vscode/settings.json
 
 # IDF 
 .pytest_cache
@@ -67,3 +68,4 @@ managed_components
 # clangd / language-server indexes
 *.idx
 .cache/
+compile_commands.json

@@ -1,0 +1,26 @@
+# clangd config for ESP-IDF example firmware.
+# Requires: cd examples && idf.py build  (generates examples/build/compile_commands.json)
+#
+# xtensa-esp*-elf-gcc defines __XTENSA__ as a builtin. compile_commands.json does not
+# include builtins, so without this define IDF headers take the host fallback
+# `#include "../hal.h"` and clangd reports a false error under FreeRTOS.h.
+CompileFlags:
+  CompilationDatabase: examples/build
+  Add:
+    - -D__XTENSA__
+    - -D__xtensa__
+    - -fno-blocks
+  Remove:
+    - -mlongcalls
+    - -fno-shrink-wrap
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion
+    - -fzero-call-used-regs=*
+    - -free*
+    - -m*
+    - --target=*
+Index:
+  Background: Build
+Diagnostics:
+  Suppress:
+    - drv_unknown_argument
