@@ -1,0 +1,5 @@
+tmp/
+bench.txt
+before.txt
+after.txt
+*.exe
