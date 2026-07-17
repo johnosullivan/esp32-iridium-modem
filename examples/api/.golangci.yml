@@ -1,0 +1,35 @@
+# golangci-lint config for the RockBLOCK webhook example.
+# See: https://blog.stackademic.com/these-go-productivity-tools-will-drastically-improve-your-workflow-d34dbd6d9bb4
+
+run:
+  timeout: 3m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - staticcheck
+    - unused
+    - gofumpt
+    - revive
+    - bodyclose
+    - exhaustive
+
+linters-settings:
+  gofumpt:
+    extra-rules: true
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+  exhaustive:
+    default-signifies-exhaustive: true
+
+issues:
+  exclude-rules:
+    - path: _enum\.go$
+      linters:
+        - revive
+        - unused

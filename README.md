@@ -20,6 +20,7 @@ Supported hardware: [RockBLOCK 9603](https://cdn-shop.adafruit.com/product-files
 | `iridium_sim.c` / `iridium_sim.h` | Fixture replay / serial traffic simulator |
 | `stack.c` / `stack.h` | UART response line stack |
 | `examples/` | ESP-IDF example firmware |
+| `examples/api/` | Go RockBLOCK MO webhook example (+ lint/air/bench tooling) |
 | `scripts/build-and-flash.sh` | Build and flash helper |
 | `scripts/modem_sim.py` | Python modem simulator for PTY testing |
 | `test/host/` | Host unit tests and fixtures |
