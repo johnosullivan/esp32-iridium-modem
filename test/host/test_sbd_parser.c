@@ -45,11 +45,53 @@ TEST(test_mo_transfer_ok_codes)
     ASSERT_FALSE(iridium_parser_mo_transfer_ok(10));
 }
 
+TEST(test_mo_try_later_and_retry_delay)
+{
+    ASSERT_TRUE(iridium_parser_mo_try_later(36));
+    ASSERT_TRUE(iridium_parser_mo_try_later(38));
+    ASSERT_FALSE(iridium_parser_mo_try_later(32));
+    ASSERT_EQ(180000, iridium_parser_mo_retry_delay_ms(36, 0));
+    ASSERT_EQ(2000, iridium_parser_mo_retry_delay_ms(32, 0));
+    ASSERT_EQ(5000, iridium_parser_mo_retry_delay_ms(38, 0));
+}
+
 TEST(test_csq_parsing)
 {
     int csq = -1;
     ASSERT_OK(iridium_parser_csq("+CSQ: 4", &csq));
     ASSERT_EQ(4, csq);
+}
+
+TEST(test_cris_and_msstm_parsing)
+{
+    int tri = -1;
+    int sri = -1;
+    ASSERT_OK(iridium_parser_cris("+CRIS:0,1", &tri, &sri));
+    ASSERT_EQ(0, tri);
+    ASSERT_EQ(1, sri);
+
+    char time_buf[32];
+    ASSERT_OK(iridium_parser_msstm("-MSSTM: abcdef01", time_buf, sizeof(time_buf)));
+    ASSERT_STR_EQ("abcdef01", time_buf);
+    ASSERT_OK(iridium_parser_msstm("-MSSTM: no network service", time_buf, sizeof(time_buf)));
+    ASSERT_STR_EQ("no network service", time_buf);
+}
+
+TEST(test_sbd_checksum_and_sbdrb_frame)
+{
+    const uint8_t hello[] = {'h', 'e', 'l', 'l', 'o'};
+    ASSERT_EQ(0x0214, iridium_parser_sbd_checksum(hello, sizeof(hello)));
+
+    /* length=5, "hello", checksum 0x0214 */
+    const uint8_t frame[] = {0x00, 0x05, 'h', 'e', 'l', 'l', 'o', 0x02, 0x14};
+    const uint8_t *payload = NULL;
+    size_t payload_len = 0;
+    ASSERT_OK(iridium_parser_sbdrb_frame(frame, sizeof(frame), &payload, &payload_len));
+    ASSERT_EQ(5, (int)payload_len);
+    ASSERT_EQ('h', payload[0]);
+
+    const uint8_t bad[] = {0x00, 0x05, 'h', 'e', 'l', 'l', 'o', 0x00, 0x00};
+    ASSERT_FALSE(iridium_parser_sbdrb_frame(bad, sizeof(bad), &payload, &payload_len));
 }
 
 TEST(test_copy_string_truncates_safely)
@@ -84,7 +126,10 @@ void run_sbd_parser_tests(void)
     RUN_TEST(test_sbdix_no_network);
     RUN_TEST(test_sbdix_malformed_rejected);
     RUN_TEST(test_mo_transfer_ok_codes);
+    RUN_TEST(test_mo_try_later_and_retry_delay);
     RUN_TEST(test_csq_parsing);
+    RUN_TEST(test_cris_and_msstm_parsing);
+    RUN_TEST(test_sbd_checksum_and_sbdrb_frame);
     RUN_TEST(test_copy_string_truncates_safely);
     RUN_TEST(test_fixture_mo_send_success);
     RUN_TEST(test_fixture_mo_retry_no_network);

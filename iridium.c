@@ -17,6 +17,12 @@
 
 static const char *TAG_IRIDIUM = "esp32_iridium";
 
+enum {
+    IRI_BIN_NONE = 0,
+    IRI_BIN_WAIT_READY = 1,
+    IRI_BIN_SBDRB = 2,
+};
+
 void ring_satcom_task(void *pvParameters);
 void uart_satcom_task(void *pvParameters);
 void buffer_satcom_task(void *pvParameters);
@@ -71,11 +77,23 @@ static bool iridium_wait_for_response(iridium_t *satcom, int nonce, int wait_int
     int elapsed_ms = 0;
 
     while (elapsed_ms < timeout_ms) {
-        if (iridium_get_iqs(satcom) == IQS_OPEN) {
-            if (result_out != NULL && result_len > 0) {
-                iridium_copy_bounded(result_out, result_len, satcom->buffer_data);
+        const iridium_queue_status_t iqs = iridium_get_iqs(satcom);
+        const int pending = iridium_get_p_nonce(satcom);
+
+        if (pending == nonce) {
+            if (iqs == IQS_OPEN) {
+                if (result_out != NULL && result_len > 0) {
+                    iridium_copy_bounded(result_out, result_len, satcom->buffer_data);
+                }
+                return true;
             }
-            return true;
+            if (iqs == IQS_FAILED) {
+                if (result_out != NULL && result_len > 0) {
+                    iridium_copy_bounded(result_out, result_len, satcom->buffer_data);
+                }
+                iridium_update_iqs(satcom, IQS_OPEN);
+                return false;
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(wait_interval_ms));
@@ -83,6 +101,33 @@ static bool iridium_wait_for_response(iridium_t *satcom, int nonce, int wait_int
     }
 
     ESP_LOGW(TAG_IRIDIUM, "Timed out waiting for response (nonce=%d)", nonce);
+    iridium_update_iqs(satcom, IQS_OPEN);
+    return false;
+}
+
+static bool iridium_wait_for_iqs(iridium_t *satcom, int nonce, iridium_queue_status_t want,
+                                 int wait_interval_ms)
+{
+    const int timeout_ms = satcom->response_timeout_ms > 0 ?
+                           satcom->response_timeout_ms : IRI_DEFAULT_TIMEOUT_MS;
+    int elapsed_ms = 0;
+
+    while (elapsed_ms < timeout_ms) {
+        if (iridium_get_p_nonce(satcom) == nonce) {
+            const iridium_queue_status_t iqs = iridium_get_iqs(satcom);
+            if (iqs == want) {
+                return true;
+            }
+            if (iqs == IQS_FAILED) {
+                iridium_update_iqs(satcom, IQS_OPEN);
+                return false;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(wait_interval_ms));
+        elapsed_ms += wait_interval_ms;
+    }
+
+    ESP_LOGW(TAG_IRIDIUM, "Timed out waiting for IQS=%d (nonce=%d)", (int)want, nonce);
     iridium_update_iqs(satcom, IQS_OPEN);
     return false;
 }
@@ -153,7 +198,8 @@ bool iridium_is_busy(const iridium_t *satcom)
         return true;
     }
 
-    return iridium_get_iqs((iridium_t *)satcom) == IQS_WAITING;
+    const iridium_queue_status_t iqs = iridium_get_iqs((iridium_t *)satcom);
+    return iqs == IQS_WAITING || iqs == IQS_READY;
 }
 
 bool iridium_uart_flow_control_enabled(const iridium_t *satcom)
@@ -183,11 +229,36 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
         return SAT_ERROR;
     }
 
-    if (strcmp("AT", command) == 0 ||
-        strcmp("AT&K0", command) == 0 ||
-        strcmp("AT&K3", command) == 0 ||
-        strcmp("AT&w0", command) == 0 ||
-        iridium_parser_starts_with("AT+SBDMTA", command)) {
+    if (strcmp("AT", command) == 0) {
+        iridium_invoke_callback(satcom, AT, SAT_OK);
+        return SAT_OK;
+    }
+    if (strcmp("AT&K0", command) == 0) {
+        iridium_invoke_callback(satcom, AT_K0, SAT_OK);
+        return SAT_OK;
+    }
+    if (strcmp("AT&K3", command) == 0) {
+        iridium_invoke_callback(satcom, AT_K3, SAT_OK);
+        return SAT_OK;
+    }
+    if (strcmp("AT&w0", command) == 0) {
+        iridium_invoke_callback(satcom, AT_W0, SAT_OK);
+        return SAT_OK;
+    }
+    if (iridium_parser_starts_with("AT+SBDMTA", command)) {
+        iridium_invoke_callback(satcom, AT_SBDMTA, SAT_OK);
+        return SAT_OK;
+    }
+    if (iridium_parser_starts_with("AT+SBDWT", command)) {
+        iridium_invoke_callback(satcom, AT_SBDWT, SAT_OK);
+        return SAT_OK;
+    }
+    if (iridium_parser_starts_with("AT+SBDWB", command)) {
+        iridium_invoke_callback(satcom, AT_SBDWB, SAT_OK);
+        return SAT_OK;
+    }
+    if (iridium_parser_starts_with("AT+SBDD", command)) {
+        iridium_invoke_callback(satcom, AT_SBDD, SAT_OK);
         return SAT_OK;
     }
 
@@ -205,9 +276,16 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
         return SAT_OK;
     }
 
+    if (strcmp("AT+CGSN", command) == 0) {
+        iridium_copy_bounded(satcom->serial_number, sizeof(satcom->serial_number), data);
+        iridium_invoke_callback(satcom, AT_CGSN, SAT_OK);
+        return SAT_OK;
+    }
+
     if (strcmp("AT+CSQ", command) == 0) {
         int csq = 0;
         if (!iridium_parser_csq(data, &csq)) {
+            iridium_invoke_callback(satcom, AT_CSQ, SAT_ERROR);
             return SAT_ERROR;
         }
         satcom->signal_strength = csq;
@@ -215,8 +293,25 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
         return SAT_OK;
     }
 
+    if (strcmp("AT-MSSTM", command) == 0) {
+        const char *src = data;
+        if (iridium_parser_starts_with("-MSSTM", data) ||
+            iridium_parser_starts_with("MSSTM", data)) {
+            if (!iridium_parser_msstm(data, satcom->network_time,
+                                      sizeof(satcom->network_time))) {
+                iridium_invoke_callback(satcom, AT_MSSTM, SAT_ERROR);
+                return SAT_ERROR;
+            }
+        } else {
+            iridium_copy_bounded(satcom->network_time, sizeof(satcom->network_time), src);
+        }
+        iridium_invoke_callback(satcom, AT_MSSTM, SAT_OK);
+        return SAT_OK;
+    }
+
     if (strcmp("AT+SBDSX", command) == 0) {
         if (!iridium_apply_sbd_session(data, satcom)) {
+            iridium_invoke_callback(satcom, AT_SBDSX, SAT_ERROR);
             return SAT_ERROR;
         }
         iridium_invoke_callback(satcom, AT_SBDSX, SAT_OK);
@@ -225,6 +320,7 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
 
     if (strcmp("AT+SBDIX", command) == 0) {
         if (!iridium_apply_sbd_session(data, satcom)) {
+            iridium_invoke_callback(satcom, AT_SBDIX, SAT_ERROR);
             return SAT_ERROR;
         }
         iridium_invoke_callback(satcom, AT_SBDIX, SAT_OK);
@@ -233,6 +329,7 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
 
     if (strcmp("AT+SBDIXA", command) == 0) {
         if (!iridium_apply_sbd_session(data, satcom)) {
+            iridium_invoke_callback(satcom, AT_SBDIXA, SAT_ERROR);
             return SAT_ERROR;
         }
         iridium_invoke_callback(satcom, AT_SBDIXA, SAT_OK);
@@ -250,16 +347,33 @@ iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command,
         iridium_message_t msg = {0};
         iridium_copy_bounded(msg.data, sizeof(msg.data), payload);
         msg.size = (int)strlen(msg.data);
-        if (xQueueSend(satcom->message_queue, &msg, pdMS_TO_TICKS(100)) != pdTRUE) {
-            ESP_LOGW(TAG_IRIDIUM, "Message queue full, dropping inbound payload");
-            return SAT_ERROR;
+
+        if (!satcom->suppress_mt_callback) {
+            if (xQueueSend(satcom->message_queue, &msg, pdMS_TO_TICKS(100)) != pdTRUE) {
+                ESP_LOGW(TAG_IRIDIUM, "Message queue full, dropping inbound payload");
+                iridium_invoke_callback(satcom, AT_SBDRT, SAT_ERROR);
+                return SAT_ERROR;
+            }
+            ESP_LOGI(TAG_IRIDIUM, "Inbound MT queued (%d bytes): %.*s",
+                     msg.size, msg.size, msg.data);
+        } else {
+            ESP_LOGD(TAG_IRIDIUM, "Inbound MT kept for sync reader (%d bytes)", msg.size);
         }
-        ESP_LOGI(TAG_IRIDIUM, "Inbound MT queued (%d bytes): %.*s",
-                 msg.size, msg.size, msg.data);
+        iridium_invoke_callback(satcom, AT_SBDRT, SAT_OK);
         return SAT_OK;
     }
 
     if (strcmp("AT+CRIS", command) == 0) {
+        if (!iridium_parser_cris(data, &satcom->cris_telephony, &satcom->cris_sbd)) {
+            iridium_invoke_callback(satcom, AT_CRIS, SAT_ERROR);
+            return SAT_ERROR;
+        }
+        iridium_invoke_callback(satcom, AT_CRIS, SAT_OK);
+        return SAT_OK;
+    }
+
+    if (strcmp("AT+SBDRB", command) == 0) {
+        iridium_invoke_callback(satcom, AT_SBDRB, SAT_OK);
         return SAT_OK;
     }
 
@@ -280,6 +394,18 @@ iridium_status_t iridium_update_p_nonce(iridium_t *satcom, int nonce)
     satcom->p_nonce = nonce;
     pthread_mutex_unlock(&satcom->p_nonce_mutex);
     return SAT_OK;
+}
+
+int iridium_get_p_nonce(iridium_t *satcom)
+{
+    int nonce = 0;
+    if (satcom == NULL) {
+        return 0;
+    }
+    pthread_mutex_lock(&satcom->p_nonce_mutex);
+    nonce = satcom->p_nonce;
+    pthread_mutex_unlock(&satcom->p_nonce_mutex);
+    return nonce;
 }
 
 iridium_queue_status_t iridium_get_iqs(iridium_t *satcom)
@@ -365,7 +491,101 @@ iridium_result_t iridium_tx_message(iridium_t *satcom, const char *message)
         return write_result;
     }
 
-    const int delays[] = {2000, 4000, 20000, 30000, 300000};
+    for (int i = 0; i < 5; i++) {
+        iridium_result_t session_result = iridium_send(satcom, AT_SBDIX, NULL, true, 500);
+        if (session_result.status == SAT_BUSY) {
+            return session_result;
+        }
+        if (session_result.status != SAT_OK) {
+            return session_result;
+        }
+
+        if (iridium_parser_mo_transfer_ok(satcom->status_outbound)) {
+            (void)iridium_clear_buffers(satcom, IRI_SBDD_MO);
+            return iridium_make_ok(satcom->buffer_data);
+        }
+
+        const int delay_ms = iridium_parser_mo_retry_delay_ms(satcom->status_outbound, i);
+        ESP_LOGW(TAG_IRIDIUM, "MO status %d — retry in %d ms (attempt %d)",
+                 satcom->status_outbound, delay_ms, i + 1);
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
+
+    ESP_LOGW(TAG_IRIDIUM, "MO transfer failed with status %d", satcom->status_outbound);
+    result = iridium_make_error();
+    iridium_copy_bounded(result.result, sizeof(result.result), satcom->buffer_data);
+    return result;
+}
+
+iridium_result_t iridium_tx_message_bin(iridium_t *satcom, const uint8_t *data, size_t len)
+{
+    iridium_result_t result = iridium_make_error();
+
+    if (satcom == NULL || data == NULL || len == 0 || len > IRI_SBD_MAX_BYTES) {
+        return result;
+    }
+
+    if (!satcom->configured || satcom->shutdown_requested) {
+        return result;
+    }
+
+    const int lock_timeout_ms = satcom->send_lock_timeout_ms != 0 ?
+                                satcom->send_lock_timeout_ms : IRI_DEFAULT_SEND_LOCK_MS;
+    if (!iridium_lock_send(satcom, lock_timeout_ms)) {
+        return iridium_make_busy();
+    }
+
+    if (satcom->shutdown_requested) {
+        iridium_unlock_send(satcom);
+        return result;
+    }
+
+    satcom->c_nonce++;
+    const int t_nonce = satcom->c_nonce;
+    char cmd_buf[32];
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+SBDWB=%u\r", (unsigned)len);
+
+    satcom->binary_mode = IRI_BIN_WAIT_READY;
+    if (iridium_send_raw(satcom, cmd_buf, t_nonce) != SAT_OK) {
+        satcom->binary_mode = IRI_BIN_NONE;
+        iridium_unlock_send(satcom);
+        return iridium_make_error();
+    }
+
+    if (!iridium_wait_for_iqs(satcom, t_nonce, IQS_READY, 100)) {
+        satcom->binary_mode = IRI_BIN_NONE;
+        iridium_unlock_send(satcom);
+        return iridium_make_error();
+    }
+
+    uint16_t checksum = iridium_parser_sbd_checksum(data, len);
+    uint8_t trailer[2] = {
+        (uint8_t)((checksum >> 8) & 0xFF),
+        (uint8_t)(checksum & 0xFF),
+    };
+
+    iridium_update_iqs(satcom, IQS_WAITING);
+    if (uart_write_bytes(satcom->uart_number, (const char *)data, len) < 0 ||
+        uart_write_bytes(satcom->uart_number, (const char *)trailer, sizeof(trailer)) < 0) {
+        satcom->binary_mode = IRI_BIN_NONE;
+        iridium_update_iqs(satcom, IQS_OPEN);
+        iridium_unlock_send(satcom);
+        return iridium_make_error();
+    }
+
+    satcom->binary_mode = IRI_BIN_NONE;
+    if (!iridium_wait_for_response(satcom, t_nonce, 100, result.result, sizeof(result.result))) {
+        iridium_unlock_send(satcom);
+        return iridium_make_error();
+    }
+
+    /* SBDWB status 0 means success. */
+    if (result.result[0] != '0') {
+        iridium_unlock_send(satcom);
+        return iridium_make_error();
+    }
+
+    iridium_unlock_send(satcom);
 
     for (int i = 0; i < 5; i++) {
         iridium_result_t session_result = iridium_send(satcom, AT_SBDIX, NULL, true, 500);
@@ -377,16 +597,15 @@ iridium_result_t iridium_tx_message(iridium_t *satcom, const char *message)
         }
 
         if (iridium_parser_mo_transfer_ok(satcom->status_outbound)) {
+            (void)iridium_clear_buffers(satcom, IRI_SBDD_MO);
             return iridium_make_ok(satcom->buffer_data);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(delays[i]));
+        const int delay_ms = iridium_parser_mo_retry_delay_ms(satcom->status_outbound, i);
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
 
-    ESP_LOGW(TAG_IRIDIUM, "MO transfer failed with status %d", satcom->status_outbound);
-    result = iridium_make_error();
-    iridium_copy_bounded(result.result, sizeof(result.result), satcom->buffer_data);
-    return result;
+    return iridium_make_error();
 }
 
 iridium_result_t iridium_rx_message(iridium_t *satcom, char *out, size_t out_len,
@@ -403,7 +622,17 @@ iridium_result_t iridium_rx_message(iridium_t *satcom, char *out, size_t out_len
         return status_result;
     }
 
-    if (satcom->messages_waiting <= 0 && satcom->bytes_received <= 0) {
+    /* Gateway has MT queued but ISU buffer is empty — pull with SBDIX. */
+    if (satcom->messages_waiting > 0 && satcom->bytes_received <= 0 &&
+        satcom->status_inbound != MT_SBD_MESSAGE_SUCCESSFULLY_RECEIVED) {
+        iridium_result_t session = iridium_send(satcom, AT_SBDIX, NULL, true, 500);
+        if (session.status != SAT_OK) {
+            return session;
+        }
+    }
+
+    if (satcom->messages_waiting <= 0 && satcom->bytes_received <= 0 &&
+        satcom->status_inbound != MT_SBD_MESSAGE_SUCCESSFULLY_RECEIVED) {
         if (received_len != NULL) {
             *received_len = 0;
         }
@@ -411,17 +640,93 @@ iridium_result_t iridium_rx_message(iridium_t *satcom, char *out, size_t out_len
         return iridium_make_ok("");
     }
 
+    satcom->suppress_mt_callback = true;
     iridium_result_t read_result = iridium_send(satcom, AT_SBDRT, NULL, true, 500);
+    satcom->suppress_mt_callback = false;
     if (read_result.status != SAT_OK) {
         return read_result;
     }
 
-    iridium_copy_bounded(out, out_len, read_result.result);
+    char payload[IRI_RESPONSE_MAX];
+    if (!iridium_parser_sbdrt_payload(read_result.result, payload, sizeof(payload))) {
+        ESP_LOGW(TAG_IRIDIUM, "Sync SBDRT payload truncated");
+    }
+
+    iridium_copy_bounded(out, out_len, payload);
     if (received_len != NULL) {
         *received_len = strlen(out);
     }
 
+    (void)iridium_clear_buffers(satcom, IRI_SBDD_MT);
     return iridium_make_ok(out);
+}
+
+iridium_result_t iridium_rx_message_bin(iridium_t *satcom, uint8_t *out, size_t out_len,
+                                        size_t *received_len)
+{
+    iridium_result_t result = iridium_make_error();
+
+    if (satcom == NULL || out == NULL || out_len == 0) {
+        return result;
+    }
+
+    iridium_result_t status_result = iridium_send(satcom, AT_SBDSX, NULL, true, 500);
+    if (status_result.status != SAT_OK) {
+        return status_result;
+    }
+
+    if (satcom->messages_waiting > 0 && satcom->bytes_received <= 0 &&
+        satcom->status_inbound != MT_SBD_MESSAGE_SUCCESSFULLY_RECEIVED) {
+        iridium_result_t session = iridium_send(satcom, AT_SBDIX, NULL, true, 500);
+        if (session.status != SAT_OK) {
+            return session;
+        }
+    }
+
+    if (satcom->messages_waiting <= 0 && satcom->bytes_received <= 0 &&
+        satcom->status_inbound != MT_SBD_MESSAGE_SUCCESSFULLY_RECEIVED) {
+        if (received_len != NULL) {
+            *received_len = 0;
+        }
+        return iridium_make_ok("");
+    }
+
+    satcom->mt_binary_len = 0;
+    satcom->sbdrb_have = 0;
+    satcom->sbdrb_need = 2;
+    satcom->binary_mode = IRI_BIN_SBDRB;
+    satcom->suppress_mt_callback = true;
+    iridium_result_t read_result = iridium_send(satcom, AT_SBDRB, NULL, true, 500);
+    satcom->suppress_mt_callback = false;
+    satcom->binary_mode = IRI_BIN_NONE;
+
+    if (read_result.status != SAT_OK) {
+        return read_result;
+    }
+
+    size_t copy_len = satcom->mt_binary_len;
+    if (copy_len > out_len) {
+        copy_len = out_len;
+    }
+    if (copy_len > 0) {
+        memcpy(out, satcom->mt_binary, copy_len);
+    }
+    if (received_len != NULL) {
+        *received_len = copy_len;
+    }
+
+    (void)iridium_clear_buffers(satcom, IRI_SBDD_MT);
+    return iridium_make_ok(read_result.result);
+}
+
+iridium_result_t iridium_clear_buffers(iridium_t *satcom, iridium_sbdd_type_t which)
+{
+    char arg[4];
+    if (which < IRI_SBDD_MO || which > IRI_SBDD_BOTH) {
+        return iridium_make_error();
+    }
+    snprintf(arg, sizeof(arg), "%d", (int)which);
+    return iridium_send(satcom, AT_SBDD, arg, true, 500);
 }
 
 iridium_result_t iridium_send(iridium_t *satcom, iridium_command_t command, char *rdata,
@@ -478,6 +783,13 @@ iridium_result_t iridium_send(iridium_t *satcom, iridium_command_t command, char
         case AT_SBDRT:
             result.status = iridium_send_raw(satcom, "AT+SBDRT\r", t_nonce);
             break;
+        case AT_SBDRB:
+            satcom->binary_mode = IRI_BIN_SBDRB;
+            satcom->sbdrb_have = 0;
+            satcom->sbdrb_need = 2;
+            satcom->mt_binary_len = 0;
+            result.status = iridium_send_raw(satcom, "AT+SBDRB\r", t_nonce);
+            break;
         case AT_CRIS:
             result.status = iridium_send_raw(satcom, "AT+CRIS\r", t_nonce);
             break;
@@ -487,6 +799,17 @@ iridium_result_t iridium_send(iridium_t *satcom, iridium_command_t command, char
         case AT_SBDMTAQ:
             result.status = iridium_send_raw(satcom, "AT+SBDMTA?\r", t_nonce);
             break;
+        case AT_CGSN:
+            result.status = iridium_send_raw(satcom, "AT+CGSN\r", t_nonce);
+            break;
+        case AT_SBDD:
+            if (rdata == NULL) {
+                iridium_unlock_send(satcom);
+                return iridium_make_error();
+            }
+            snprintf(cmd_buf, sizeof(cmd_buf), "AT+SBDD%s\r", rdata);
+            result.status = iridium_send_raw(satcom, cmd_buf, t_nonce);
+            break;
         case AT_SBDWT:
             if (rdata == NULL) {
                 iridium_unlock_send(satcom);
@@ -494,6 +817,25 @@ iridium_result_t iridium_send(iridium_t *satcom, iridium_command_t command, char
             }
             snprintf(cmd_buf, sizeof(cmd_buf), "AT+SBDWT=%s\r", rdata);
             result.status = iridium_send_raw(satcom, cmd_buf, t_nonce);
+            break;
+        case AT_SBDWB:
+            if (rdata == NULL) {
+                iridium_unlock_send(satcom);
+                return iridium_make_error();
+            }
+            /* Length-only; use iridium_tx_message_bin() for the full MO transfer. */
+            snprintf(cmd_buf, sizeof(cmd_buf), "AT+SBDWB=%s\r", rdata);
+            satcom->binary_mode = IRI_BIN_WAIT_READY;
+            result.status = iridium_send_raw(satcom, cmd_buf, t_nonce);
+            if (result.status == SAT_OK && wait_response) {
+                if (!iridium_wait_for_iqs(satcom, t_nonce, IQS_READY, wait_interval)) {
+                    satcom->binary_mode = IRI_BIN_NONE;
+                    iridium_unlock_send(satcom);
+                    return iridium_make_error();
+                }
+                iridium_unlock_send(satcom);
+                return iridium_make_ok("READY");
+            }
             break;
         case AT_SBDMTA:
             if (rdata == NULL) {
@@ -519,6 +861,7 @@ iridium_result_t iridium_send(iridium_t *satcom, iridium_command_t command, char
     }
 
     if (result.status != SAT_OK) {
+        satcom->binary_mode = IRI_BIN_NONE;
         iridium_unlock_send(satcom);
         return result;
     }
@@ -530,6 +873,7 @@ iridium_result_t iridium_send(iridium_t *satcom, iridium_command_t command, char
 
     if (!iridium_wait_for_response(satcom, t_nonce, wait_interval,
                                     result.result, sizeof(result.result))) {
+        satcom->binary_mode = IRI_BIN_NONE;
         iridium_unlock_send(satcom);
         return iridium_make_error();
     }
@@ -685,7 +1029,57 @@ void uart_satcom_task(void *pvParameters)
                 ESP_LOGD(TAG_IRIDIUM, "UART RX: %.*s", read_len, dtmp);
 
                 for (int i = 0; i < read_len; i++) {
-                    char c = (char)dtmp[i];
+                    uint8_t byte = dtmp[i];
+
+                    if (satcom->binary_mode == IRI_BIN_SBDRB) {
+                        if (satcom->sbdrb_have < (int)sizeof(satcom->sbdrb_frame)) {
+                            satcom->sbdrb_frame[satcom->sbdrb_have++] = byte;
+                        }
+
+                        if (satcom->sbdrb_have == 2) {
+                            size_t payload_len = ((size_t)satcom->sbdrb_frame[0] << 8) |
+                                                 (size_t)satcom->sbdrb_frame[1];
+                            if (payload_len > IRI_SBD_MAX_BYTES) {
+                                ESP_LOGW(TAG_IRIDIUM, "SBDRB length %u too large",
+                                         (unsigned)payload_len);
+                                satcom->binary_mode = IRI_BIN_NONE;
+                                iridium_update_iqs(satcom, IQS_FAILED);
+                                continue;
+                            }
+                            satcom->sbdrb_need = (int)(payload_len + 4);
+                        }
+
+                        if (satcom->sbdrb_have >= satcom->sbdrb_need && satcom->sbdrb_need >= 4) {
+                            const uint8_t *payload = NULL;
+                            size_t payload_len = 0;
+                            if (iridium_parser_sbdrb_frame(satcom->sbdrb_frame,
+                                                           (size_t)satcom->sbdrb_have,
+                                                           &payload, &payload_len)) {
+                                if (payload_len > sizeof(satcom->mt_binary)) {
+                                    payload_len = sizeof(satcom->mt_binary);
+                                }
+                                memcpy(satcom->mt_binary, payload, payload_len);
+                                satcom->mt_binary_len = payload_len;
+                                snprintf(satcom->buffer_data, sizeof(satcom->buffer_data),
+                                         "%u", (unsigned)payload_len);
+                            } else {
+                                ESP_LOGW(TAG_IRIDIUM, "SBDRB checksum/frame invalid");
+                                satcom->mt_binary_len = 0;
+                            }
+                            satcom->binary_mode = IRI_BIN_NONE;
+                            /* Remaining bytes (OK) fall through to line parser. */
+                        } else {
+                            continue;
+                        }
+
+                        /* If this byte completed the frame, don't also treat it as text. */
+                        if (satcom->binary_mode == IRI_BIN_NONE &&
+                            satcom->sbdrb_have >= satcom->sbdrb_need) {
+                            continue;
+                        }
+                    }
+
+                    char c = (char)byte;
 
                     if (c == '\r' || c == '\n') {
                         if (line_accum_len == 0) {
@@ -699,8 +1093,18 @@ void uart_satcom_task(void *pvParameters)
                             push(s, line);
                         } else if (strcmp("SBDRING", line) == 0) {
                             iridium_try_start_ring_task(satcom);
+                        } else if (strcmp("READY", line) == 0) {
+                            iridium_update_iqs(satcom, IQS_READY);
                         } else if (strcmp("ERROR", line) == 0) {
-                            /* Keep waiting; do not clear the pending command stack. */
+                            ESP_LOGW(TAG_IRIDIUM, "Modem ERROR");
+                            clear_stack(s);
+                            line_accum_len = 0;
+                            line_accum[0] = '\0';
+                            satcom->binary_mode = IRI_BIN_NONE;
+                            iridium_copy_bounded(satcom->buffer_data,
+                                                 sizeof(satcom->buffer_data), "ERROR");
+                            iridium_update_iqs(satcom, IQS_FAILED);
+                            continue;
                         } else if (strcmp("OK", line) == 0) {
                             char data[IRI_RESPONSE_MAX] = {0};
                             char command[IRI_AT_CMD_MAX] = {0};
@@ -721,8 +1125,12 @@ void uart_satcom_task(void *pvParameters)
                             if (iridium_uart_finalize_ok(lines, line_count, command,
                                                          sizeof(command), data,
                                                          sizeof(data))) {
-                                iridium_copy_bounded(satcom->buffer_data,
-                                                     sizeof(satcom->buffer_data), data);
+                                /* Prefer SBDRB length already stored in buffer_data. */
+                                if (!(iridium_parser_starts_with("AT+SBDRB", command) &&
+                                      satcom->mt_binary_len > 0)) {
+                                    iridium_copy_bounded(satcom->buffer_data,
+                                                         sizeof(satcom->buffer_data), data);
+                                }
                                 if (iridium_satcom_process_result(satcom, command,
                                                                   data) == SAT_OK) {
                                     ESP_LOGD(TAG_IRIDIUM, "Parsed %s", command);
@@ -759,6 +1167,11 @@ void uart_satcom_task(void *pvParameters)
                 xQueueReset(satcom->uart_queue);
                 line_accum_len = 0;
                 line_accum[0] = '\0';
+                clear_stack(s);
+                satcom->binary_mode = IRI_BIN_NONE;
+                iridium_copy_bounded(satcom->buffer_data, sizeof(satcom->buffer_data),
+                                     "OVERFLOW");
+                iridium_update_iqs(satcom, IQS_FAILED);
                 ESP_LOGW(TAG_IRIDIUM, "UART overflow, input flushed");
                 break;
             default:
@@ -864,6 +1277,16 @@ iridium_status_t iridium_system_spec(iridium_t *satcom)
     }
 
     r = iridium_send(satcom, AT_CGMM, NULL, true, 500);
+    if (r.status != SAT_OK) {
+        return r.status;
+    }
+
+    r = iridium_send(satcom, AT_CGSN, NULL, true, 500);
+    if (r.status != SAT_OK) {
+        return r.status;
+    }
+
+    r = iridium_send(satcom, AT_MSSTM, NULL, true, 500);
     return r.status;
 }
 
@@ -912,6 +1335,16 @@ static void iridium_destroy_resources(iridium_t *satcom)
     }
 
     satcom->shutdown_requested = true;
+    satcom->binary_mode = IRI_BIN_NONE;
+
+    /* Unblock RI monitor if it is waiting on its queue. */
+    if (satcom->ri_gpio_queue != NULL) {
+        uint8_t evt = 0;
+        xQueueSend(satcom->ri_gpio_queue, &evt, 0);
+    }
+
+    /* Let cooperative tasks observe shutdown before forced delete. */
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     iridium_stop_task(&satcom->task_ring_handle);
     iridium_stop_task(&satcom->task_ri_handle);
@@ -939,7 +1372,6 @@ static void iridium_destroy_resources(iridium_t *satcom)
     if (satcom->gpio_ri_pin_number != -1) {
         gpio_isr_handler_remove((gpio_num_t)satcom->gpio_ri_pin_number);
     }
-    satcom->uart_queue = NULL;
 
     pthread_mutex_destroy(&satcom->p_status_mutex);
     pthread_mutex_destroy(&satcom->p_nonce_mutex);
@@ -958,6 +1390,18 @@ iridium_status_t iridium_deinit(iridium_t *satcom)
 
     iridium_destroy_resources(satcom);
     return SAT_OK;
+}
+
+void iridium_destroy(iridium_t *satcom)
+{
+    if (satcom == NULL) {
+        return;
+    }
+
+    if (satcom->configured) {
+        iridium_destroy_resources(satcom);
+    }
+    free(satcom);
 }
 
 static iridium_status_t iridium_configure_gpio(iridium_t *satcom)
@@ -1104,6 +1548,13 @@ iridium_status_t iridium_config(iridium_t *satcom)
     satcom->p_nonce = 0;
     satcom->ring_task_running = 0;
     satcom->shutdown_requested = false;
+    satcom->suppress_mt_callback = false;
+    satcom->binary_mode = IRI_BIN_NONE;
+    satcom->mt_binary_len = 0;
+    satcom->sbdrb_have = 0;
+    satcom->sbdrb_need = 0;
+    satcom->cris_telephony = 0;
+    satcom->cris_sbd = 0;
     satcom->status = IQS_OPEN;
 
     satcom->buffer_queue = xQueueCreate(satcom->buffer_size, sizeof(iridium_message_t));

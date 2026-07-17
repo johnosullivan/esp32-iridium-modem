@@ -230,7 +230,12 @@ static bool apply_parsed_response(iridium_sim_state_t *state,
     if (strcmp(command, "AT") == 0 ||
         iridium_parser_starts_with("AT+SBDMTA", command) ||
         iridium_parser_starts_with("AT+SBDWT", command) ||
-        iridium_parser_starts_with("AT+CRIS", command)) {
+        iridium_parser_starts_with("AT+SBDWB", command) ||
+        iridium_parser_starts_with("AT+SBDD", command) ||
+        iridium_parser_starts_with("AT+CGSN", command) ||
+        iridium_parser_starts_with("AT-MSSTM", command) ||
+        iridium_parser_starts_with("AT+CRIS", command) ||
+        iridium_parser_starts_with("AT+SBDRB", command)) {
         return true;
     }
 
