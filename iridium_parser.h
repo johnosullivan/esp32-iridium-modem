@@ -7,6 +7,7 @@
 #define IRIDIUM_PARSER_H_INCLUDED
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -38,6 +39,31 @@ bool iridium_parser_csq(const char *response_line, int *csq_out);
 
 /** True when MO status indicates a successful mobile-originated transfer. */
 bool iridium_parser_mo_transfer_ok(int mo_status);
+
+/** True when MO status asks the FA to retry later (36 / 38). */
+bool iridium_parser_mo_try_later(int mo_status);
+
+/** Suggested retry delay in ms for an MO status (0 if not a retryable wait). */
+int iridium_parser_mo_retry_delay_ms(int mo_status, int attempt_index);
+
+/** Parse +CRIS:<tri>,<sri> ring indication status. */
+bool iridium_parser_cris(const char *response_line, int *telephony_out, int *sbd_out);
+
+/**
+ * Parse -MSSTM:<system_time>.
+ * Copies the token after the colon into out (e.g. hex time or "no network service").
+ */
+bool iridium_parser_msstm(const char *response_line, char *out, size_t out_len);
+
+/** Least-significant 16 bits of the sum of `len` message bytes (SBD checksum). */
+uint16_t iridium_parser_sbd_checksum(const uint8_t *data, size_t len);
+
+/**
+ * Parse an SBDRB frame: 2-byte BE length + payload + 2-byte BE checksum.
+ * @return true when the frame is well-formed and the checksum matches.
+ */
+bool iridium_parser_sbdrb_frame(const uint8_t *frame, size_t frame_len,
+                                const uint8_t **payload_out, size_t *payload_len_out);
 
 /**
  * Apply the UART task's OK-handler logic to a stack snapshot.

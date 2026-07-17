@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 
 static const char *skip_prefix(const char *data)
 {
@@ -81,6 +82,107 @@ bool iridium_parser_csq(const char *response_line, int *csq_out)
 bool iridium_parser_mo_transfer_ok(int mo_status)
 {
     return mo_status == 0 || mo_status == 1 || mo_status == 2;
+}
+
+bool iridium_parser_mo_try_later(int mo_status)
+{
+    return mo_status == 36 || mo_status == 38;
+}
+
+int iridium_parser_mo_retry_delay_ms(int mo_status, int attempt_index)
+{
+    static const int default_delays[] = {2000, 4000, 20000, 30000, 300000};
+    static const int traffic_delays[] = {5000, 15000, 45000, 90000, 300000};
+    const int max_idx = 4;
+    int idx = attempt_index;
+
+    if (idx < 0) {
+        idx = 0;
+    }
+    if (idx > max_idx) {
+        idx = max_idx;
+    }
+
+    if (mo_status == 36) {
+        return 180000;
+    }
+    if (mo_status == 38) {
+        return traffic_delays[idx];
+    }
+    return default_delays[idx];
+}
+
+bool iridium_parser_cris(const char *response_line, int *telephony_out, int *sbd_out)
+{
+    if (response_line == NULL || telephony_out == NULL || sbd_out == NULL) {
+        return false;
+    }
+
+    int tri = 0;
+    int sri = 0;
+    if (sscanf(skip_prefix(response_line), " %d,%d", &tri, &sri) != 2) {
+        return false;
+    }
+
+    *telephony_out = tri;
+    *sbd_out = sri;
+    return true;
+}
+
+bool iridium_parser_msstm(const char *response_line, char *out, size_t out_len)
+{
+    if (out == NULL || out_len == 0) {
+        return false;
+    }
+
+    out[0] = '\0';
+    if (response_line == NULL) {
+        return false;
+    }
+
+    const char *value = skip_prefix(response_line);
+    while (*value == ' ' || *value == '\t') {
+        value++;
+    }
+
+    return iridium_parser_copy_string(out, out_len, value);
+}
+
+uint16_t iridium_parser_sbd_checksum(const uint8_t *data, size_t len)
+{
+    uint32_t sum = 0;
+    if (data == NULL) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < len; i++) {
+        sum += data[i];
+    }
+    return (uint16_t)(sum & 0xFFFFu);
+}
+
+bool iridium_parser_sbdrb_frame(const uint8_t *frame, size_t frame_len,
+                                const uint8_t **payload_out, size_t *payload_len_out)
+{
+    if (frame == NULL || frame_len < 4 || payload_out == NULL || payload_len_out == NULL) {
+        return false;
+    }
+
+    size_t payload_len = ((size_t)frame[0] << 8) | (size_t)frame[1];
+    if (payload_len > 340 || frame_len < payload_len + 4) {
+        return false;
+    }
+
+    const uint8_t *payload = frame + 2;
+    uint16_t expected = iridium_parser_sbd_checksum(payload, payload_len);
+    uint16_t actual = ((uint16_t)frame[2 + payload_len] << 8) | (uint16_t)frame[3 + payload_len];
+    if (expected != actual) {
+        return false;
+    }
+
+    *payload_out = payload;
+    *payload_len_out = payload_len;
+    return true;
 }
 
 bool iridium_uart_finalize_ok(const char **stack_top_first, size_t line_count,

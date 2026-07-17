@@ -45,7 +45,7 @@ Options:
 Host tests run without hardware or ESP-IDF:
 
 ```bash
-make test          # 21 unit tests (parser, framing, serial replay)
+make test          # 24 unit tests (parser, framing, serial replay)
 make replay        # replay mo_send_success fixture, print parsed state
 make sim-dry-run   # preview Python modem traffic without a serial port
 ```
@@ -263,20 +263,29 @@ Callbacks are optional but recommended for command completion and inbound messag
 iridium_t *iridium_default_configuration(void);
 iridium_status_t iridium_config(iridium_t *satcom);
 iridium_status_t iridium_deinit(iridium_t *satcom);
+void iridium_destroy(iridium_t *satcom);
 ```
 
-`iridium_config()` installs UART, starts background tasks, and probes the modem with `AT`. `iridium_deinit()` stops tasks, uninstalls UART, and tears down queues.
+`iridium_config()` installs UART, starts background tasks, and probes the modem with `AT`. `iridium_deinit()` stops tasks, uninstalls UART, and tears down queues. `iridium_destroy()` deinits (if needed) and frees a heap-allocated handle from `iridium_default_configuration()`.
 
 ### Messaging
 
 ```c
 iridium_result_t iridium_tx_message(iridium_t *satcom, const char *message);
+iridium_result_t iridium_tx_message_bin(iridium_t *satcom, const uint8_t *data, size_t len);
 iridium_result_t iridium_rx_message(iridium_t *satcom, char *out, size_t out_len, size_t *received_len);
+iridium_result_t iridium_rx_message_bin(iridium_t *satcom, uint8_t *out, size_t out_len,
+                                        size_t *received_len);
+iridium_result_t iridium_clear_buffers(iridium_t *satcom, iridium_sbdd_type_t which);
 ```
 
-`iridium_tx_message()` writes the MO buffer (`AT+SBDWT`) then runs `AT+SBDIX` with adaptive retry. Messages must be ≤ `IRI_SBD_MAX_BYTES` (340).
+`iridium_tx_message()` writes the MO buffer (`AT+SBDWT`) then runs `AT+SBDIX` with MO-status-aware retry (including 3-minute backoff for status 36). Messages must be ≤ `IRI_SBD_MAX_BYTES` (340). On success it clears the MO buffer (`AT+SBDD0`).
 
-`iridium_rx_message()` polls mailbox status (`AT+SBDSX`) and reads the MT buffer (`AT+SBDRT`) when data is waiting.
+`iridium_tx_message_bin()` uses `AT+SBDWB` (READY handshake + checksum) then the same SBDIX retry path.
+
+`iridium_rx_message()` polls mailbox status (`AT+SBDSX`), runs `AT+SBDIX` when the gateway has MT queued but the ISU buffer is empty, then reads with `AT+SBDRT`. Sync reads suppress `message_callback` so payloads are not double-delivered. On success it clears the MT buffer (`AT+SBDD1`).
+
+`iridium_rx_message_bin()` is the binary equivalent using `AT+SBDRB`.
 
 ### Commands
 
@@ -287,9 +296,11 @@ iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled);
 iridium_status_t iridium_system_spec(iridium_t *satcom);
 ```
 
-`iridium_send()` dispatches an AT command. When `wait_response` is true, it blocks until the modem replies or `response_timeout_ms` is reached. If another caller already owns the modem, it returns `SAT_BUSY` after `send_lock_timeout_ms` (default 2000) instead of waiting forever.
+`iridium_send()` dispatches an AT command. When `wait_response` is true, it blocks until the modem replies for the matching nonce, or until `response_timeout_ms` / modem `ERROR` / UART overflow. If another caller already owns the modem, it returns `SAT_BUSY` after `send_lock_timeout_ms` (default 2000) instead of waiting forever.
 
-Supported commands include `AT`, `AT+CSQ`, `AT+CGMI`, `AT+CGMM`, `AT+SBDSX`, `AT+SBDIX`, `AT+SBDIXA`, `AT+SBDWT`, `AT+SBDRT`, `AT+SBDMTA`, and configuration helpers (`AT&w0`, `AT&K0`, `AT&K3`).
+Supported commands include `AT`, `AT+CSQ`, `AT+CGMI`, `AT+CGMM`, `AT+CGSN`, `AT-MSSTM`, `AT+SBDSX`, `AT+SBDIX`, `AT+SBDIXA`, `AT+SBDWT`, `AT+SBDWB`, `AT+SBDRT`, `AT+SBDRB`, `AT+SBDD`, `AT+SBDMTA`, `AT+CRIS`, and configuration helpers (`AT&w0`, `AT&K0`, `AT&K3`).
+
+`iridium_system_spec()` queries manufacturer, model, IMEI (`serial_number`), and network time (`network_time`).
 
 ### Power, availability, and ring GPIO
 
@@ -320,8 +331,11 @@ After `AT+SBDIX` / `AT+SBDSX`, these fields on `iridium_t` are populated:
 | `sequence_inbound` | MT message sequence number |
 | `bytes_received` | MT message length |
 | `messages_waiting` | MT messages queued at gateway |
+| `serial_number` | IMEI from `AT+CGSN` |
+| `network_time` | Iridium system time from `AT-MSSTM` |
+| `cris_telephony` / `cris_sbd` | Ring indication status from `AT+CRIS` |
 
-MO success codes: `0`, `1`, `2`. Common failure: `32` (no network service).
+MO success codes: `0`, `1`, `2`. Common failure: `32` (no network service). Retry-later: `36` (≈3 min), `38` (traffic period).
 
 ### Callbacks
 
@@ -331,7 +345,7 @@ typedef void (*iridium_event_callback_t)(iridium_t *satcom, iridium_command_t co
 typedef void (*iridium_message_callback_t)(iridium_t *satcom, const char *data, size_t size);
 ```
 
-`callback` fires when a command completes (e.g. `AT_CSQ`, `AT_SBDIX`). `message_callback` fires for inbound SBD payloads delivered via `AT+SBDRT` or the ring task.
+`callback` fires when a command completes (including failures for parse errors). `message_callback` fires for inbound SBD payloads from ring-driven `AT+SBDRT` reads. Sync `iridium_rx_message()` / `iridium_rx_message_bin()` suppress the message callback to avoid double delivery.
 
 ---
 

@@ -65,6 +65,10 @@ typedef enum iridium_command {
     AT_K0           = 13,
     AT_SBDMTAQ      = 14,
     AT_K3           = 15,
+    AT_CGSN         = 16,
+    AT_SBDD         = 17,
+    AT_SBDWB        = 18,
+    AT_SBDRB        = 19,
 } iridium_command_t;
 
 typedef enum iridium_status {
@@ -76,8 +80,17 @@ typedef enum iridium_status {
 typedef enum iridium_queue_status {
     IQS_NONE        = -1,
     IQS_OPEN        = 0,
-    IQS_WAITING     = 1
+    IQS_WAITING     = 1,
+    IQS_FAILED      = 2,
+    IQS_READY       = 3
 } iridium_queue_status_t;
+
+/** +SBDD buffer selector */
+typedef enum iridium_sbdd_type {
+    IRI_SBDD_MO     = 0,
+    IRI_SBDD_MT     = 1,
+    IRI_SBDD_BOTH   = 2
+} iridium_sbdd_type_t;
 
 typedef enum iridium_mt_status {
     MT_NO_SBD_MESSAGE_RECEIVED              = 0,
@@ -130,6 +143,11 @@ typedef struct iridium {
 
     char manufacturer_identification[32];
     char model_identification[64];
+    char serial_number[16];
+    char network_time[32];
+
+    int cris_telephony;
+    int cris_sbd;
 
     int c_nonce;
     int p_nonce;
@@ -156,6 +174,8 @@ typedef struct iridium {
     int task_ring_stack_depth;
 
     char buffer_data[IRI_RESPONSE_MAX];
+    uint8_t mt_binary[IRI_SBD_MAX_BYTES];
+    size_t mt_binary_len;
     iridium_queue_status_t status;
 
     iridium_event_callback_t callback;
@@ -169,6 +189,11 @@ typedef struct iridium {
     volatile int ring_task_running;
     volatile bool configured;
     volatile bool shutdown_requested;
+    volatile bool suppress_mt_callback;
+    volatile int binary_mode;
+    volatile int sbdrb_need;
+    volatile int sbdrb_have;
+    uint8_t sbdrb_frame[IRI_SBD_MAX_BYTES + 4];
 
     TaskHandle_t task_uart_handle;
     TaskHandle_t task_buffer_handle;
@@ -194,12 +219,18 @@ iridium_t *iridium_default_configuration(void);
 
 iridium_status_t iridium_config(iridium_t *satcom);
 iridium_status_t iridium_deinit(iridium_t *satcom);
+/** Tear down resources and free a heap-allocated `iridium_t` from `iridium_default_configuration()`. */
+void iridium_destroy(iridium_t *satcom);
 
 iridium_result_t iridium_send(iridium_t *satcom, iridium_command_t command, char *rdata,
                               bool wait_response, int wait_interval);
 iridium_result_t iridium_config_ring(iridium_t *satcom, bool enabled);
 iridium_result_t iridium_tx_message(iridium_t *satcom, const char *message);
+iridium_result_t iridium_tx_message_bin(iridium_t *satcom, const uint8_t *data, size_t len);
 iridium_result_t iridium_rx_message(iridium_t *satcom, char *out, size_t out_len, size_t *received_len);
+iridium_result_t iridium_rx_message_bin(iridium_t *satcom, uint8_t *out, size_t out_len,
+                                        size_t *received_len);
+iridium_result_t iridium_clear_buffers(iridium_t *satcom, iridium_sbdd_type_t which);
 
 iridium_status_t iridium_system_spec(iridium_t *satcom);
 iridium_status_t iridium_modem_sleep(iridium_t *satcom);
@@ -213,6 +244,7 @@ bool iridium_uart_flow_control_enabled(const iridium_t *satcom);
 iridium_status_t iridium_satcom_process_result(iridium_t *satcom, char *command, char *data);
 iridium_status_t iridium_update_iqs(iridium_t *satcom, iridium_queue_status_t status);
 iridium_status_t iridium_update_p_nonce(iridium_t *satcom, int nonce);
+int iridium_get_p_nonce(iridium_t *satcom);
 iridium_queue_status_t iridium_get_iqs(iridium_t *satcom);
 iridium_status_t iridium_send_raw(iridium_t *satcom, char *data, int nonce);
 
