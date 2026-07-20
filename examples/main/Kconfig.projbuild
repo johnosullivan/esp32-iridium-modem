@@ -62,10 +62,10 @@ menu "Iridium Configuration"
     config EXAMPLE_BUTTON_GPIO_NUM
         int "Demo button GPIO"
         range 0 48
-        default 4
+        default 0
         help
-            Press to send an SBD message. Long-press toggles sleep when
-            EXAMPLE_ENABLE_SLEEP_DEMO is enabled.
+            Press to send an SBD message (ESP32-S3-DevKitC-1 BOOT = GPIO0).
+            Long-press toggles sleep when EXAMPLE_ENABLE_SLEEP_DEMO is enabled.
 
     config EXAMPLE_CSQ_INTERVAL_MS
         int "Signal poll interval (ms)"
@@ -84,7 +84,7 @@ menu "Iridium Configuration"
 
     config EXAMPLE_ENABLE_SLEEP_DEMO
         bool "Enable long-press sleep/wake demo"
-        default n
+        default y
         help
             Hold the demo button for ~2 seconds to call iridium_modem_sleep()
             / iridium_modem_wake(). Requires UART_SLEEP_GPIO_NUM configured.

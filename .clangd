@@ -1,9 +1,12 @@
 # clangd config for ESP-IDF example firmware.
-# Requires: cd examples && idf.py build  (generates examples/build/compile_commands.json)
+# Requires: cd examples && idf.py build
 #
-# xtensa-esp*-elf-gcc defines __XTENSA__ as a builtin. compile_commands.json does not
-# include builtins, so without this define IDF headers take the host fallback
-# `#include "../hal.h"` and clangd reports a false error under FreeRTOS.h.
+# After build, scripts/patch_compile_commands_for_clangd.py (CMake POST_BUILD) injects
+# the xtensa newlib -isystem paths so clangd can find <sys/reent.h> without
+# --query-driver (which breaks on unsupported --target=xtensa).
+#
+# Also injects -D__XTENSA__ so IDF headers do not take the host fallback
+# `#include "../hal.h"`.
 CompileFlags:
   CompilationDatabase: examples/build
   Add:

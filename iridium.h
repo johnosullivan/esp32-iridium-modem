@@ -172,6 +172,7 @@ typedef struct iridium {
     int task_buffer_stack_depth;
     int task_uart_stack_depth;
     int task_ring_stack_depth;
+    int task_ri_stack_depth;
 
     char buffer_data[IRI_RESPONSE_MAX];
     uint8_t mt_binary[IRI_SBD_MAX_BYTES];

@@ -1,5 +1,3 @@
-# Ensure __XTENSA__ is always visible to clangd for this translation unit,
-# even if a parent config or stale compile DB omits GCC builtins.
 CompileFlags:
   Add:
     - -D__XTENSA__
