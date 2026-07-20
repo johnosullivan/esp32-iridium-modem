@@ -926,6 +926,13 @@ void ri_gpio_task(void *pvParameters)
             break;
         }
 
+        /* SLP low can glitch RI; do not start a ring session while asleep. */
+        if (satcom->gpio_sleep_pin_number != -1 &&
+            gpio_get_level((gpio_num_t)satcom->gpio_sleep_pin_number) == IRI_GPIO_SLP_OFF) {
+            ESP_LOGD(TAG_IRIDIUM, "Ignoring RI while modem asleep");
+            continue;
+        }
+
         ESP_LOGI(TAG_IRIDIUM, "RI pin asserted");
         iridium_try_start_ring_task(satcom);
     }
@@ -1243,6 +1250,8 @@ iridium_t *iridium_default_configuration(void)
     satcom->task_buffer_stack_depth = 2048;
     satcom->task_uart_stack_depth = 8192;
     satcom->task_ring_stack_depth = 8192;
+    /* ESP_LOGI + pthread/xTaskCreate need headroom beyond a bare queue loop */
+    satcom->task_ri_stack_depth = 4096;
     satcom->gpio_sleep_pin_number = -1;
     satcom->gpio_net_pin_number = -1;
     satcom->gpio_ri_pin_number = -1;
@@ -1481,7 +1490,7 @@ static iridium_status_t iridium_start_ri_monitor(iridium_t *satcom)
 
     if (xTaskCreate(ri_gpio_task,
                     "ri_gpio_task",
-                    2048,
+                    satcom->task_ri_stack_depth,
                     satcom,
                     12,
                     &satcom->task_ri_handle) != pdPASS) {
