@@ -436,8 +436,13 @@ iridium_status_t iridium_send_raw(iridium_t *satcom, char *data, int nonce)
         return SAT_OK;
     }
 
-    ESP_LOGD(TAG_IRIDIUM, "UART TX nonce=%d len=%u", nonce, (unsigned)strlen(data));
+    {
+        size_t tx_len = strlen(data);
+        ESP_LOGI(TAG_IRIDIUM, "UART TX nonce=%d len=%u: %.*s",
+                 nonce, (unsigned)tx_len, (int)tx_len, data);
+    }
     if (uart_write_bytes(satcom->uart_number, data, strlen(data)) < 0) {
+        ESP_LOGE(TAG_IRIDIUM, "UART TX write failed nonce=%d", nonce);
         return SAT_ERROR;
     }
 
@@ -565,8 +570,16 @@ iridium_result_t iridium_tx_message_bin(iridium_t *satcom, const uint8_t *data, 
     };
 
     iridium_update_iqs(satcom, IQS_WAITING);
+    ESP_LOGI(TAG_IRIDIUM, "UART TX binary len=%u checksum=0x%02X%02X",
+             (unsigned)len, trailer[0], trailer[1]);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG_IRIDIUM, data, len > 64 ? 64 : len, ESP_LOG_INFO);
+    if (len > 64) {
+        ESP_LOGI(TAG_IRIDIUM, "UART TX binary … (%u more bytes omitted from hex dump)",
+                 (unsigned)(len - 64));
+    }
     if (uart_write_bytes(satcom->uart_number, (const char *)data, len) < 0 ||
         uart_write_bytes(satcom->uart_number, (const char *)trailer, sizeof(trailer)) < 0) {
+        ESP_LOGE(TAG_IRIDIUM, "UART TX binary write failed");
         satcom->binary_mode = IRI_BIN_NONE;
         iridium_update_iqs(satcom, IQS_OPEN);
         iridium_unlock_send(satcom);
@@ -1033,7 +1046,22 @@ void uart_satcom_task(void *pvParameters)
                     break;
                 }
 
-                ESP_LOGD(TAG_IRIDIUM, "UART RX: %.*s", read_len, dtmp);
+                ESP_LOGI(TAG_IRIDIUM, "UART RX len=%d: %.*s", read_len, read_len, dtmp);
+                /* Also dump hex when bytes are not printable AT text. */
+                {
+                    bool printable = true;
+                    for (int pi = 0; pi < read_len; pi++) {
+                        uint8_t c = dtmp[pi];
+                        if (c != '\r' && c != '\n' && (c < 0x20 || c > 0x7e)) {
+                            printable = false;
+                            break;
+                        }
+                    }
+                    if (!printable) {
+                        ESP_LOG_BUFFER_HEX_LEVEL(TAG_IRIDIUM, dtmp,
+                                                 read_len > 64 ? 64 : read_len, ESP_LOG_INFO);
+                    }
+                }
 
                 for (int i = 0; i < read_len; i++) {
                     uint8_t byte = dtmp[i];
